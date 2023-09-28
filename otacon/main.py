@@ -40,6 +40,7 @@ import json
 import logging
 import calendar
 import argparse
+import multiprocessing
 from datetime import datetime
 from typing import TextIO
 
@@ -416,8 +417,62 @@ def get_data_file(path: str) -> str:
     exit()
 
 
+def process_month(month, args, result_queue=None):
+    count_for_month = 0
+    infile_dir = args.input + "/" + month + "/"
+    infile_name = month.replace(" ", "_")
+    infile = get_data_file(infile_dir+infile_name)
+    for comment in read_redditfile(infile):
+        if relevant(comment, args):
+            if not args.count:
+                with open(assemble_outfile_name(args, month), "a", encoding="utf-8") as outf, \
+                     open(assemble_outfile_name(args, month, filtered=True), "a", encoding="utf-8") as reviewf:
+                    filtered, reason = filter(comment, args.popularity)
+                    if not filtered:
+                        extract(comment, args.regex, outf, filter_reason=None)
+                    else:
+                        extract(comment, args.regex, reviewf, filter_reason=reason)
+            else:
+                count_for_month += 1
+
+    if args.count and result_queue:
+        result_queue.put(count_for_month)
+
+
+def assemble_outfile_name(args, month, filtered=False):
+    base_name = month.replace(" ", "_")
+    base_outfile = base_name + ("_filtered-out_matches.csv" if filtered else ".csv")
+    return base_outfile
+
 
 def main():
+    logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
+    args = handle_args()
+    timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
+
+    if not args.count:
+        for month in timeframe:
+            write_csv_headers(assemble_outfile_name(args, month))
+            write_csv_headers(assemble_outfile_name(args, month, filtered=True))
+
+    processes = []
+    result_queue = multiprocessing.Queue() if args.count else None
+
+    for month in timeframe:
+        proc = multiprocessing.Process(target=process_month, args=(month, args, result_queue))
+        processes.append(proc)
+        proc.start()
+
+    for proc in processes:
+        proc.join()
+
+    if args.count:
+        total_count = 0
+        while not result_queue.empty():
+            total_count += result_queue.get()
+        print(total_count, "relevant comments found.")
+
+""" def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
 
     args = handle_args()
@@ -461,7 +516,7 @@ def main():
 
     # print the count for the last month
     if args.count:
-        print(counter, "relevant comments found.")
+        print(counter, "relevant comments found.") """
 
 
 if __name__ == "__main__":
