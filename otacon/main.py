@@ -418,6 +418,7 @@ def get_data_file(path: str) -> str:
 
 
 def process_month(month, args, result_queue=None):
+    log_month(month)
     count_for_month = 0
     infile_dir = args.input + "/" + month + "/"
     infile_name = month.replace(" ", "_")
@@ -441,7 +442,7 @@ def process_month(month, args, result_queue=None):
 
 def assemble_outfile_name(args, month, filtered=False):
     base_name = month.replace(" ", "_")
-    base_outfile = base_name + ("_filtered-out_matches.csv" if filtered else ".csv")
+    base_outfile = args.output + "/" + base_name + ("_filtered-out_matches.csv" if filtered else ".csv")
     return base_outfile
 
 
@@ -450,27 +451,20 @@ def main():
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
 
+    # Writing the CSV headers
     if not args.count:
         for month in timeframe:
-            write_csv_headers(assemble_outfile_name(args, month))
-            write_csv_headers(assemble_outfile_name(args, month, filtered=True))
+            outfile = assemble_outfile_name(args, month)
+            reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
+            write_csv_headers(outfile, reviewfile)
 
-    processes = []
-    result_queue = multiprocessing.Queue() if args.count else None
-
-    for month in timeframe:
-        proc = multiprocessing.Process(target=process_month, args=(month, args, result_queue))
-        processes.append(proc)
-        proc.start()
-
-    for proc in processes:
-        proc.join()
+    with multiprocessing.Pool(processes=8) as pool:
+        results = pool.starmap(process_month, [(month, args) for month in timeframe])
 
     if args.count:
-        total_count = 0
-        while not result_queue.empty():
-            total_count += result_queue.get()
+        total_count = sum(results)
         print(total_count, "relevant comments found.")
+
 
 """ def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
