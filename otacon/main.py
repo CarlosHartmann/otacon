@@ -458,59 +458,12 @@ def main():
             reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
             write_csv_headers(outfile, reviewfile)
 
-    with multiprocessing.Pool(processes=8) as pool:
+    with multiprocessing.Pool(processes=7) as pool:
         results = pool.starmap(process_month, [(month, args) for month in timeframe])
 
     if args.count:
         total_count = sum(results)
         print(total_count, "relevant comments found.")
-
-
-""" def main():
-    logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
-
-    args = handle_args()
-    timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
-    logging.info(str(len(timeframe)) + " month(s) in given timeframe. Check if any month is missing in the data if the number does not make sense.")
-    
-    # prepare the output and review files (for results and filtered-out comments)
-    outfile = assemble_outfile_name(args)
-    reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
-    if not args.count:
-        write_csv_headers(outfile, reviewfile)
-
-    # instantiate counter
-    if args.count:
-        counter = 0
-
-    for month in timeframe:
-        # reset counter for each month
-        if args.count and month is not timeframe[0]:
-            print(counter, "relevant comments found.")
-            counter = 0
-
-        log_month(month)
-        infile_dir = args.input + "/" + month + "/"
-        infile_name = month.replace(" ", "_") # the files have an underscore where the directories have a space char
-        infile = get_data_file(infile_dir+infile_name)
-        for comment in read_redditfile(infile):
-            if relevant(comment, args):
-                if not args.count:
-                    # files are repeatedly opened and closed to enable the user to live-monitor the results
-                    with open(outfile, "a", encoding="utf-8") as outf, \
-                        open(reviewfile, "a", encoding="utf-8") as reviewf:
-
-                        filtered, reason = filter(comment, args.popularity)
-                        if not filtered:
-                            extract(comment, args.regex, outf, filter_reason=None)
-                        else:
-                            extract(comment, args.regex, reviewf, filter_reason=reason)
-                elif args.count:
-                    counter += 1
-
-    # print the count for the last month
-    if args.count:
-        print(counter, "relevant comments found.") """
 
 
 if __name__ == "__main__":
