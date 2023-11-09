@@ -458,7 +458,7 @@ def main():
             reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
             write_csv_headers(outfile, reviewfile)
 
-    with multiprocessing.Pool(processes=7) as pool:
+    with multiprocessing.Pool(processes=max(multiprocessing.cpu_count()//2, 1)) as pool:
         results = pool.starmap(process_month, [(month, args) for month in timeframe])
 
     if args.count:
