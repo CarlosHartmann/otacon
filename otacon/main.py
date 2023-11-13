@@ -219,6 +219,7 @@ def read_lines_zst(file_name):
 def within_timeframe(month: str, time_from: tuple, time_to: tuple) -> bool:
     """Test if a given month from the Pushshift Corpus is within the user's provided timeframe."""
     # a month's directory name has the format "RC YYYY-MM"
+    month = re.sub('\.\w+$', '', month)
     month = month.split('.')[0] # remove file ending
     y = int(month.split("_")[1].split("-")[0])
     m = int(month.split("-")[1])
@@ -239,6 +240,8 @@ def within_timeframe(month: str, time_from: tuple, time_to: tuple) -> bool:
         if y == to_year and m > to_month:
             return False
     
+    print(month)
+
     return True
 
 
@@ -248,7 +251,8 @@ def fetch_data_timeframe(input_dir: str) -> tuple:
     Used when no timeframe was given by user.
     """
     months = [elem.replace("RC_", "") for elem in os.listdir(input_dir) if elem.startswith('RC')]
-    months = [elem.replace(".zst", "") for elem in os.listdir(input_dir) if elem.startswith('RC')]
+    months = [elem.replace("RS_", "") for elem in os.listdir(input_dir) if elem.startswith('RS')]
+    months = [elem.replace(".zst", "") for elem in os.listdir(input_dir) if elem.endswith('.zst')]
     months = sorted(months)
     months = [(int(elem.split("-")[0]), int(elem.split("-")[1])) for elem in months]
     return months[0], months[-1]
@@ -256,7 +260,7 @@ def fetch_data_timeframe(input_dir: str) -> tuple:
 
 def establish_timeframe(time_from: tuple, time_to: tuple, input_dir: str) -> list:
     """Return all months of the data within a timeframe as list of directories."""
-    months = [elem for elem in os.listdir(input_dir) if elem.startswith("RC")] # all available months in the input directory
+    months = [elem for elem in os.listdir(input_dir) if elem.startswith("RC") or elem.startswith("RS")] # all available months in the input directory
 
     return sorted([month for month in months if within_timeframe(month, time_from, time_to)])
 
@@ -395,6 +399,7 @@ def handle_args() -> argparse.Namespace:
 def log_month(month: str):
     """Send a message to the log with a month's real name for better clarity."""
     month = month.replace("RC_", "")
+    month = month.replace("RS_", "")
     month = month.replace(".zst", "")
     year = month.split("-")[0] # get year string from the format 'RC_YYYY-MM.zst'
     m_num = int(month.split("-")[1]) # get month integer
@@ -450,6 +455,8 @@ def main():
     multiprocessing_logging.install_mp_handler()
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
+
+    print(timeframe)
 
     # Writing the CSV headers
     if not args.count:
