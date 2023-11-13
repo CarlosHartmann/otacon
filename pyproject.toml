@@ -13,6 +13,7 @@ pathvalidate = "^3.0.0"
 zstandard = "^0.21.0"
 scikit-learn = "^1.2.2"
 en-core-web-sm = {url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-2.3.0/en_core_web_sm-2.3.0.tar.gz"}
+multiprocessing-logging = "^0.3.4"
 
 
 [build-system]

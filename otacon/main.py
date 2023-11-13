@@ -44,15 +44,11 @@ import multiprocessing
 from datetime import datetime
 from typing import TextIO
 
-import spacy
 from zstandard import ZstdDecompressor
 #from profanity_filter import ProfanityFilter
 from pathvalidate import sanitize_filename
 
-# load SpaCy and add the profanity-filter module as a SpaCy pipeline
-#nlp = spacy.load('en_core_web_sm')
-#profanity_filter = ProfanityFilter(nlps={'en': nlp})
-#nlp.add_pipe(profanity_filter.spacy_component, last=True)
+import multiprocessing_logging
 
 # keep track of already-processed comments throughout function calls
 hash_list = []
@@ -223,7 +219,8 @@ def read_lines_zst(file_name):
 def within_timeframe(month: str, time_from: tuple, time_to: tuple) -> bool:
     """Test if a given month from the Pushshift Corpus is within the user's provided timeframe."""
     # a month's directory name has the format "RC YYYY-MM"
-    y = int(month.split(" ")[1].split("-")[0])
+    month = month.split('.')[0] # remove file ending
+    y = int(month.split("_")[1].split("-")[0])
     m = int(month.split("-")[1])
 
     if time_from is not None:
@@ -250,7 +247,8 @@ def fetch_data_timeframe(input_dir: str) -> tuple:
     Establish a timeframe based on all directories found in the input directory.
     Used when no timeframe was given by user.
     """
-    months = [elem.replace("RC ", "") for elem in os.listdir(input_dir) if elem.startswith('RC')]
+    months = [elem.replace("RC_", "") for elem in os.listdir(input_dir) if elem.startswith('RC')]
+    months = [elem.replace(".zst", "") for elem in os.listdir(input_dir) if elem.startswith('RC')]
     months = sorted(months)
     months = [(int(elem.split("-")[0]), int(elem.split("-")[1])) for elem in months]
     return months[0], months[-1]
@@ -394,12 +392,15 @@ def handle_args() -> argparse.Namespace:
     return args
 
 
-
 def log_month(month: str):
     """Send a message to the log with a month's real name for better clarity."""
-    year = month.replace("RC ", "").split("-")[0] # get year string from the format 'RC YYYY-MM'
+    month = month.replace("RC_", "")
+    month = month.replace(".zst", "")
+    year = month.split("-")[0] # get year string from the format 'RC_YYYY-MM.zst'
     m_num = int(month.split("-")[1]) # get month integer
     m_name = calendar.month_name[m_num]
+
+    multiprocessing_logging.install_mp_handler()
 
     logging.info("Processing " + m_name + " " + year)
     
@@ -420,9 +421,7 @@ def get_data_file(path: str) -> str:
 def process_month(month, args, result_queue=None):
     log_month(month)
     count_for_month = 0
-    infile_dir = args.input + "/" + month + "/"
-    infile_name = month.replace(" ", "_")
-    infile = get_data_file(infile_dir+infile_name)
+    infile = args.input + "/" + month
     for comment in read_redditfile(infile):
         if relevant(comment, args):
             if not args.count:
@@ -448,6 +447,7 @@ def assemble_outfile_name(args, month, filtered=False):
 
 def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
+    multiprocessing_logging.install_mp_handler()
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
 
@@ -457,6 +457,8 @@ def main():
             outfile = assemble_outfile_name(args, month)
             reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
             write_csv_headers(outfile, reviewfile)
+
+    logging.info("Preparations done. Beginning data extraction.")
 
     with multiprocessing.Pool(processes=max(multiprocessing.cpu_count()//2, 1)) as pool:
         results = pool.starmap(process_month, [(month, args) for month in timeframe])

@@ -350,6 +350,16 @@ files = [
 ]
 
 [[package]]
+name = "multiprocessing-logging"
+version = "0.3.4"
+description = "Logger for multiprocessing applications"
+optional = false
+python-versions = "*"
+files = [
+    {file = "multiprocessing_logging-0.3.4-py2.py3-none-any.whl", hash = "sha256:8a5be02b02edbd6fa6e3e89499af7680db69db9e2d8707fcd28d445fa248f23e"},
+]
+
+[[package]]
 name = "murmurhash"
 version = "1.0.9"
 description = "Cython bindings for MurmurHash"
@@ -1025,4 +1035,4 @@ cffi = ["cffi (>=1.11)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "7c9e2a4436e361dd5103cf0f685a243eb4e87c282ccb2f66176d40468e5e0039"
+content-hash = "904ddf3e2dff48ca5fb6424d6f7bdd7f1e4fc2f248ad656a000a360c02d321e2"
