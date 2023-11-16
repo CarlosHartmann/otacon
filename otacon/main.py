@@ -239,8 +239,6 @@ def within_timeframe(month: str, time_from: tuple, time_to: tuple) -> bool:
             return False
         if y == to_year and m > to_month:
             return False
-    
-    print(month)
 
     return True
 
@@ -455,8 +453,6 @@ def main():
     multiprocessing_logging.install_mp_handler()
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
-
-    print(timeframe)
 
     # Writing the CSV headers
     if not args.count:
