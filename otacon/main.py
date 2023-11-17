@@ -50,6 +50,8 @@ from pathvalidate import sanitize_filename
 
 import multiprocessing_logging
 
+from finalize import *
+
 # keep track of already-processed comments throughout function calls
 hash_list = []
 
@@ -292,7 +294,7 @@ def dir_path(string) -> str:
         raise NotADirectoryError(string)
 
 
-def assemble_outfile_name(args: argparse.Namespace) -> str:
+def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     """
     Assemble the outfile name out of the search parameters in human-readable and sanitized form.
     Full path is returned.
@@ -318,13 +320,17 @@ def assemble_outfile_name(args: argparse.Namespace) -> str:
     if args.toplevel:
         outfile_name += "_toplevel-only_"
     # add time of search
-    outfile_name += "_" + datetime.now().strftime('%Y-%m-%d_at_%Hh-%Mm-%Ss')
+    outfile_name += "_executed-at_" + datetime.now().strftime('%Y-%m-%d_at_%Hh-%Mm-%Ss')
     # sanitize to avoid illegal filename characters
     outfile_name = sanitize_filename(outfile_name)
-    # add path and file ending
-    outfile = args.output + "/" + outfile_name + ".csv"
+    # specify the month of the reddit data
+    outfile_name = outfile_name + "_" + month if month is not None else outfile_name
+    # add file ending
+    outfile_name += ".csv"
 
-    return outfile
+    print(outfile_name)
+
+    return outfile_name
 
 
 
@@ -442,23 +448,22 @@ def process_month(month, args, result_queue=None):
         result_queue.put(count_for_month)
 
 
-def assemble_outfile_name(args, month, filtered=False):
-    base_name = month.replace(" ", "_")
-    base_outfile = args.output + "/" + base_name + ("_filtered-out_matches.csv" if filtered else ".csv")
-    return base_outfile
-
-
 def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
     multiprocessing_logging.install_mp_handler()
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
 
+    args.output = os.path.abspath(args.output)
+
     # Writing the CSV headers
     if not args.count:
         for month in timeframe:
+            month = month.replace(".zst", "")
             outfile = assemble_outfile_name(args, month)
+            outfile = os.path.join(args.output, outfile)
             reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
+            reviewfile = os.path.join(args.output, reviewfile)
             write_csv_headers(outfile, reviewfile)
 
     logging.info("Preparations done. Beginning data extraction.")
@@ -469,6 +474,8 @@ def main():
     if args.count:
         total_count = sum(results)
         print(total_count, "relevant comments found.")
+    else:
+        cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
 
 if __name__ == "__main__":
