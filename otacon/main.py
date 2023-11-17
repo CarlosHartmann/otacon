@@ -328,8 +328,6 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     # add file ending
     outfile_name += ".csv"
 
-    print(outfile_name)
-
     return outfile_name
 
 
