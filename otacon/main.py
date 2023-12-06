@@ -135,7 +135,7 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
     """
     if args.name is not None: # if a subreddit or user was specified as argument, the comment's metadata are checked accordingly
         src = 'author' if args.src == 'user' else 'subreddit' # the username is called 'author' in the data
-        if comment[src] != args.name: 
+        if comment[src] not in args.name: 
             return False
     
     if args.toplevel and not comment['parent_id'].startswith('t3'):
@@ -299,8 +299,8 @@ def comment_regex(string) -> str:
     Currently just to allow for quoted blocks to come at the beginning if the supplied regex asks for regex matches at the beginning of comments via ^
     """
     if '^' in string:
-        flag = re.search('^\^?(\(?.+?\))\^?(.+$)', string).group(1)
-        expr = re.search('^\^?(\(?.+?\))\^?(.+$)', string).group(2)
+        flag = re.search('^(\(?.+?\))\^?(.+$)', string).group(1) # in case there is a flag of the type (?i) at the start
+        expr = re.search('^(\(?.+?\))\^?(.+$)', string).group(2)
         string = '^' + flag + '(^>.+\n\n)*' + expr
 
     return string
@@ -363,8 +363,8 @@ def define_parser() -> argparse.ArgumentParser:
     # search parameters
     parser.add_argument('--src', '-S', choices=['user', 'subreddit'], required=False,
                         help="The source of the comments, can either be 'user' or 'subreddit'.")
-    parser.add_argument('--name', '-N', required=False,
-                        help="The name of the user or subreddit to be searched. If absent, every comment will be searched.")
+    parser.add_argument('--name', '-N', action='append', required=False,
+                        help="The name of the user(s) or subreddit(s) to be searched. If absent, every comment will be searched.")
     parser.add_argument('--regex', '-R', type=comment_regex, required=False,
                         help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
