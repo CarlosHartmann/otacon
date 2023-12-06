@@ -73,7 +73,7 @@ def inside_quote(text: str, span: tuple) -> bool:
     return True if re.search('&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a quote symbol and the match
 
 
-def extract(comment: dict, regex: str, outfile: TextIO, filter_reason: str):
+def extract(comment: dict, regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
     """
     Extract a comment text and all relevant metadata.
     If no regex is supplied, extract the whole comment leaving the span field blank.
@@ -102,7 +102,7 @@ def extract(comment: dict, regex: str, outfile: TextIO, filter_reason: str):
         csvwriter.writerow(row)
     else:
         for span in find_all_matches(text, regex):
-            if not inside_quote(text, span):
+            if not include_quoted and not inside_quote(text, span):
                 span = str(span)
                 row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
                 csvwriter.writerow(row)
@@ -375,6 +375,8 @@ def define_parser() -> argparse.ArgumentParser:
     # special
     parser.add_argument('--count', '-C', action='store_true',
                         help="Only counts the relevant comments per month and prints the statistic to console.")
+    parser.add_argument('--include_quoted', action='store_true',
+                        help="Include regex matches that are inside Reddit quotes (lines starting with >, often but not exclusively used to quote other Reddit users)")
 
     return parser
 
@@ -448,9 +450,9 @@ def process_month(month, args, result_queue=None):
                      open(assemble_outfile_name(args, month, filtered=True), "a", encoding="utf-8") as reviewf:
                     filtered, reason = filter(comment, args.popularity)
                     if not filtered:
-                        extract(comment, args.regex, outf, filter_reason=None)
+                        extract(comment, args.regex, args.include_quoted, outf, filter_reason=None)
                     else:
-                        extract(comment, args.regex, reviewf, filter_reason=reason)
+                        extract(comment, args.regex, args.include_quoted, reviewf, filter_reason=reason)
             else:
                 count_for_month += 1
 
