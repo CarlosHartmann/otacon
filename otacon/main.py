@@ -50,7 +50,7 @@ from pathvalidate import sanitize_filename
 
 import multiprocessing_logging
 
-from finalize import *
+from otacon.finalize import *
 
 # keep track of already-processed comments throughout function calls
 hash_list = []
@@ -221,8 +221,7 @@ def read_lines_zst(file_name):
 def within_timeframe(month: str, time_from: tuple, time_to: tuple) -> bool:
     """Test if a given month from the Pushshift Corpus is within the user's provided timeframe."""
     # a month's directory name has the format "RC YYYY-MM"
-    month = re.sub('\.\w+$', '', month)
-    month = month.split('.')[0] # remove file ending
+    month = re.sub('\.\w+$', '', month) # remove file ending
     y = int(month.split("_")[1].split("-")[0])
     m = int(month.split("-")[1])
 
@@ -294,6 +293,19 @@ def dir_path(string) -> str:
         raise NotADirectoryError(string)
 
 
+def comment_regex(string) -> str:
+    """
+    Some modifications for supplied regexes.
+    Currently just to allow for quoted blocks to come at the beginning if the supplied regex asks for regex matches at the beginning of comments via ^
+    """
+    if '^' in string:
+        flag = re.search('^\^?(\(?.+?\))\^?(.+$)', string).group(1)
+        expr = re.search('^\^?(\(?.+?\))\^?(.+$)', string).group(2)
+        string = '^' + flag + '(^>.+\n\n)*' + expr
+
+    return string
+
+
 def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     """
     Assemble the outfile name out of the search parameters in human-readable and sanitized form.
@@ -353,7 +365,7 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The source of the comments, can either be 'user' or 'subreddit'.")
     parser.add_argument('--name', '-N', required=False,
                         help="The name of the user or subreddit to be searched. If absent, every comment will be searched.")
-    parser.add_argument('--regex', '-R', required=False,
+    parser.add_argument('--regex', '-R', type=comment_regex, required=False,
                         help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
                         help="Popularity threshold: Filters out comments with a score lower than the given value.")

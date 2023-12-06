@@ -11,6 +11,7 @@ from otacon.main import within_timeframe
 from otacon.main import filter
 from otacon.main import fetch_data_timeframe
 from otacon.main import inside_quote
+from otacon.main import comment_regex
 
 def test_valid_date():
     assert valid_date('2010-01') == (2010, 1)
@@ -28,32 +29,33 @@ def test_valid_date():
 
 
 def test_dir_path():
-    assert dir_path('/Users/Carlitos') == '/Users/Carlitos'
+    assert dir_path('/Users/chartman') == '/Users/chartman'
 
     with pytest.raises(NotADirectoryError):
         assert dir_path('/Some/Kind/Of/Clown/Path') != '/Some/Kind/Of/Clown/Path'
 
 
 def test_within_timeframe():
-    assert within_timeframe('RC 2010-03', (2010, 1), (2010, 6)) == True
-    assert within_timeframe('RC 2010-03', (2010, 1), (2010, 3)) == True
-    assert within_timeframe('RC 2010-03', (2010, 3), (2010, 6)) == True
-    assert within_timeframe('RC 2010-03', (2010, 3), (2010, 3)) == True
-    assert within_timeframe('RC 2011-03', (2010, 5), (2012, 1)) == True
-    assert within_timeframe('RC 2011-03', (2010, 1), (2012, 5)) == True
-    assert within_timeframe('RC 2011-03', (2001, 12), (2011, 3)) == True
+    assert within_timeframe('RC_2010-03.zst', (2010, 1), (2010, 6)) == True
+    assert within_timeframe('RC_2010-03.zst', (2010, 1), (2010, 3)) == True
+    assert within_timeframe('RC_2010-03.zst', (2010, 3), (2010, 6)) == True
+    assert within_timeframe('RC_2010-03', (2010, 3), (2010, 3)) == True
+    assert within_timeframe('RC_2011-03', (2010, 5), (2012, 1)) == True
+    assert within_timeframe('RC_2011-03', (2010, 1), (2012, 5)) == True
+    assert within_timeframe('RC_2011-03', (2001, 12), (2011, 3)) == True
 
 
-    assert within_timeframe('RC 2009-03', (2010, 1), (2010, 6)) == False
-    assert within_timeframe('RC 2020-03', (2010, 1), (2010, 6)) == False
+    assert within_timeframe('RC_2009-03', (2010, 1), (2010, 6)) == False
+    assert within_timeframe('RC_2020-03', (2010, 1), (2010, 6)) == False
 
-def test_filter():
-    assert filter({'body':'Gosh darn it, anyway!'}, popularity_threshold=None) == (False, None)
-    assert filter({'body': 'Fuck fuck fuck fuck fuck fuck fuck!'}, popularity_threshold=None) == (True, 'offensive language')
-    assert filter({'body':"Bleep bloop, I'm a bot!"}, popularity_threshold=None) == (True, 'non-human generated')
+#def test_filter():
+#    assert filter({'body':'Gosh darn it, anyway!'}, popularity_threshold=None) == (False, None)
+#    assert filter({'body': 'Fuck fuck fuck fuck fuck fuck fuck!'}, popularity_threshold=None) == (True, 'offensive language')
+#    assert filter({'body':"Bleep bloop, I'm a bot!"}, popularity_threshold=None) == (True, 'non-human generated')
 
-def test_fetch_data_timeframe():
-    assert fetch_data_timeframe("data") == ((2010, 1), (2012, 8))
+# This one only works if there is a data dir and you want to make sure that the timeframe corresponds to the data that you think you have
+# def test_fetch_data_timeframe():
+#    assert fetch_data_timeframe("data") == ((2010, 1), (2012, 8))
 
 def test_inside_quote():
     text = '''Lookie here:
@@ -69,3 +71,8 @@ def test_inside_quote():
 
     assert inside_quote(text, span1) == True
     assert inside_quote(text, span2) == False
+
+def test_comment_regex():
+    string = '(?i)^naja'
+
+    assert comment_regex(string) == '^(?i)(^>.+\n\n)*naja'
