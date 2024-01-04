@@ -141,12 +141,19 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
     if args.toplevel and not comment['parent_id'].startswith('t3'):
         return False
 
-    if args.regex is None: # if no regex is specified, every comment is relevant at this point
-        pass
-    elif re.search(args.regex, comment['body']): # checks if regex matches at least once, matches are extracted later
-        pass
-    else:
-        return False
+    if args.commentregex is not None:
+        if re.search(args.commentregex, comment['body']): # checks if comment regex matches at least once, matches are extracted later
+            pass
+        else:
+            return False
+    
+    if  args.flairregex is not None:
+        if comment['author_flair_text'] is None:
+            return False
+        elif re.search(args.flairregex, comment['author_flair_text']): # checks if flair regex matches
+            pass
+        else:
+            return False
     
     h = hash(json.dumps(comment, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
     if h in hash_list: # hash check with all previous comments in case the data contain redundancies
@@ -313,13 +320,13 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     """
     outfile_name = "comment_extraction"
     # add regex input
-    if args.regex is not None:
-        outfile_name += "_matching_'" + args.regex
+    if args.commentregex is not None:
+        outfile_name += "_matching_'" + args.commentregex
     else:
         outfile_name += "_"
     # add user/subreddit if provided
     if args.name is not None:
-        outfile_name += "_from_" + args.src + "_" + args.name
+        outfile_name += "_from_" + args.src + "_" + ';'.join(args.name)
     # add timeframe info
     # this allows for the name to make sense with any or both of the timeframe bounds absent or present
     if args.time_from is not None:
@@ -361,12 +368,14 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The end of the timeframe to be searched, in the format YYYY-MM. If absent, a timeframe is assumed with no upper bound.")
     
     # search parameters
-    parser.add_argument('--src', '-S', choices=['user', 'subreddit'], required=False,
+    parser.add_argument('--src','--source' '-S', choices=['user', 'subreddit'], required=False,
                         help="The source of the comments, can either be 'user' or 'subreddit'.")
     parser.add_argument('--name', '-N', action='append', required=False,
                         help="The name of the user(s) or subreddit(s) to be searched. If absent, every comment will be searched.")
-    parser.add_argument('--regex', '-R', type=comment_regex, required=False,
+    parser.add_argument('--commentregex', '-CR', type=comment_regex, required=False,
                         help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted.")
+    parser.add_argument('--flairregex', '-FR', type=comment_regex, required=False,
+                        help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
                         help="Popularity threshold: Filters out comments with a score lower than the given value.")
     parser.add_argument('--toplevel', '-TL', action='store_true', required=False,
@@ -389,7 +398,7 @@ def handle_args() -> argparse.Namespace:
     # all search parameters are optional to allow for different types of searches
     # should they all be missing, it would lead to data overflow as every comment would be extracted
     # this ignores the popularity and toplevel arguments because they alone would still lead to overflow
-    if args.time_from is None and args.time_to is None and args.src is None and args.regex is None:
+    if args.time_from is None and args.time_to is None and args.src is None and args.commentregex is None and args.flairregex is None:
         parser.error("Not enough parameters supplied. Search would return too many comments.")
 
     # the 'src' argument is required if 'name' is given, however both are optional
@@ -439,20 +448,20 @@ def get_data_file(path: str) -> str:
     exit()
 
 
-def process_month(month, args, result_queue=None):
+def process_month(month, args, outfile, reviewfile, result_queue=None):
     log_month(month)
     count_for_month = 0
     infile = args.input + "/" + month
     for comment in read_redditfile(infile):
         if relevant(comment, args):
             if not args.count:
-                with open(assemble_outfile_name(args, month), "a", encoding="utf-8") as outf, \
-                     open(assemble_outfile_name(args, month, filtered=True), "a", encoding="utf-8") as reviewf:
+                with open(outfile, "a", encoding="utf-8") as outf, \
+                     open(reviewfile, "a", encoding="utf-8") as reviewf:
                     filtered, reason = filter(comment, args.popularity)
                     if not filtered:
-                        extract(comment, args.regex, args.include_quoted, outf, filter_reason=None)
+                        extract(comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
                     else:
-                        extract(comment, args.regex, args.include_quoted, reviewf, filter_reason=reason)
+                        extract(comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
             else:
                 count_for_month += 1
 
@@ -481,7 +490,7 @@ def main():
     logging.info("Preparations done. Beginning data extraction.")
 
     with multiprocessing.Pool(processes=max(multiprocessing.cpu_count()//2, 1)) as pool:
-        results = pool.starmap(process_month, [(month, args) for month in timeframe])
+        results = pool.starmap(process_month, [(month, args, outfile, reviewfile) for month in timeframe])
 
     if args.count:
         total_count = sum(results)
