@@ -430,8 +430,6 @@ def log_month(month: str):
     m_num = int(month.split("-")[1]) # get month integer
     m_name = calendar.month_name[m_num]
 
-    multiprocessing_logging.install_mp_handler()
-
     logging.info("Processing " + m_name + " " + year)
     
 
@@ -448,10 +446,10 @@ def get_data_file(path: str) -> str:
     exit()
 
 
-def process_month(month, args, outfile, reviewfile, result_queue=None):
+def process_month(month, args, outfile, reviewfile):
     log_month(month)
     count_for_month = 0
-    infile = args.input + "/" + month
+    infile = args.input + "/" + month + ".zst"
     for comment in read_redditfile(infile):
         if relevant(comment, args):
             if not args.count:
@@ -464,9 +462,6 @@ def process_month(month, args, outfile, reviewfile, result_queue=None):
                         extract(comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
             else:
                 count_for_month += 1
-
-    if args.count and result_queue:
-        result_queue.put(count_for_month)
 
 
 def main():
@@ -486,17 +481,12 @@ def main():
             reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
             reviewfile = os.path.join(args.output, reviewfile)
             write_csv_headers(outfile, reviewfile)
+            log_month(month)
+            process_month(month, args, outfile, reviewfile)
 
-    logging.info("Preparations done. Beginning data extraction.")
 
-    with multiprocessing.Pool(processes=max(multiprocessing.cpu_count()//2, 1)) as pool:
-        results = pool.starmap(process_month, [(month, args, outfile, reviewfile) for month in timeframe])
 
-    if args.count:
-        total_count = sum(results)
-        print(total_count, "relevant comments found.")
-    else:
-        cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
+    cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
 
 if __name__ == "__main__":
