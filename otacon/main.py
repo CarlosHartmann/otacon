@@ -463,7 +463,6 @@ def process_month(month, args, outfile, reviewfile):
 
 def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
-    multiprocessing_logging.install_mp_handler()
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
 
