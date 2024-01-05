@@ -40,15 +40,12 @@ import json
 import logging
 import calendar
 import argparse
-import multiprocessing
 from datetime import datetime
 from typing import TextIO
 
 from zstandard import ZstdDecompressor
 #from profanity_filter import ProfanityFilter
 from pathvalidate import sanitize_filename
-
-import multiprocessing_logging
 
 from otacon.finalize import *
 
