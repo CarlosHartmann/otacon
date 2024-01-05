@@ -302,7 +302,13 @@ def comment_regex(string) -> str:
     Some modifications for supplied regexes.
     Currently just to allow for quoted blocks to come at the beginning if the supplied regex asks for regex matches at the beginning of comments via ^
     """
-    if '^' in string:
+    
+    if os.path.isfile(string):
+        regex = open(string, "r", encoding="utf-8").read()
+    else:
+        regex = string
+    
+    if '^' in regex:
         flag = re.search('^(\(?.+?\))\^?(.+$)', string).group(1) # in case there is a flag of the type (?i) at the start
         expr = re.search('^(\(?.+?\))\^?(.+$)', string).group(2)
         string = '^' + flag + '(^>.+\n\n)*' + expr
@@ -326,10 +332,13 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
         outfile_name += "_from_" + args.src + "_" + ';'.join(args.name)
     # add timeframe info
     # this allows for the name to make sense with any or both of the timeframe bounds absent or present
-    if args.time_from is not None:
-        outfile_name += "_from_" + str(args.time_from[0]) + '-' + str(args.time_from[1])
-    if args.time_to is not None:
-        outfile_name += "_up_to_" + str(args.time_to[0]) + '-' + str(args.time_to[1])
+    if month is not None:
+        outfile_name += "_from_" + month
+    else:
+        if args.time_from is not None:
+            outfile_name += "_from_" + str(args.time_from[0]) + '-' + str(args.time_from[1])
+        if args.time_to is not None:
+            outfile_name += "_up_to_" + str(args.time_to[0]) + '-' + str(args.time_to[1])
     # add optional filters
     if args.popularity is not None:
         outfile_name += "_score_over_" + str(args.popularity)
@@ -446,7 +455,7 @@ def get_data_file(path: str) -> str:
 def process_month(month, args, outfile, reviewfile):
     log_month(month)
     count_for_month = 0
-    infile = args.input + "/" + month + ".zst"
+    infile = args.input + "/" + month
     for comment in read_redditfile(infile):
         if relevant(comment, args):
             if not args.count:
@@ -471,13 +480,11 @@ def main():
     # Writing the CSV headers
     if not args.count:
         for month in timeframe:
-            month = month.replace(".zst", "")
             outfile = assemble_outfile_name(args, month)
             outfile = os.path.join(args.output, outfile)
             reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
             reviewfile = os.path.join(args.output, reviewfile)
             write_csv_headers(outfile, reviewfile)
-            log_month(month)
             process_month(month, args, outfile, reviewfile)
 
 

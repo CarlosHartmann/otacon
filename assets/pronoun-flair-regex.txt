@@ -1,0 +1,1 @@
+(?:(?<=^)|(?<=\W))(he/him/his|he/him|she/her/hers|she/her|she/hers|they/them/themself|they/them|e/em|e/er|Xe/Xem/Xyr|Ey/Em/Eir|Zie/Zim/Zir|Ve/Ver/Vis|Ne/Nem/Nir)(?=$|(?=\W))

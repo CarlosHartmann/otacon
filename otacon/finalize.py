@@ -11,8 +11,8 @@ import csv
 
 def extract_time_info(filename):
     '''Reads the year and month info from each filename.'''
-    year = re.findall('\d{4}', filename)[-1]
-    month = re.findall('\-(\d{2})', filename)[-1]
+    year = re.search('\d{4}', filename).group()
+    month = re.search('\-(\d{2})', filename).group(1)
     return year, month
 
 
