@@ -308,12 +308,12 @@ def comment_regex(string) -> str:
     else:
         regex = string
     
-    if '^' in regex:
-        flag = re.search('^(\(?.+?\))\^?(.+$)', string).group(1) # in case there is a flag of the type (?i) at the start
-        expr = re.search('^(\(?.+?\))\^?(.+$)', string).group(2)
-        string = '^' + flag + '(^>.+\n\n)*' + expr
+    if regex.startswith('^'):
+        flag = re.search('^(\(?.+?\))\^?(.+$)', regex).group(1) # in case there is a flag of the type (?i) at the start
+        expr = re.search('^(\(?.+?\))\^?(.+$)', regex).group(2)
+        regex = '^' + flag + '(^>.+\n\n)*' + expr
 
-    return string
+    return regex
 
 
 def assemble_outfile_name(args: argparse.Namespace, month) -> str:
@@ -379,9 +379,9 @@ def define_parser() -> argparse.ArgumentParser:
     parser.add_argument('--name', '-N', action='append', required=False,
                         help="The name of the user(s) or subreddit(s) to be searched. If absent, every comment will be searched.")
     parser.add_argument('--commentregex', '-CR', type=comment_regex, required=False,
-                        help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted.")
+                        help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--flairregex', '-FR', type=comment_regex, required=False,
-                        help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted.")
+                        help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
                         help="Popularity threshold: Filters out comments with a score lower than the given value.")
     parser.add_argument('--toplevel', '-TL', action='store_true', required=False,
@@ -468,6 +468,9 @@ def process_month(month, args, outfile, reviewfile):
                         extract(comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
             else:
                 count_for_month += 1
+    
+    if args.count:
+        return count_for_month
 
 
 def main():
@@ -486,10 +489,15 @@ def main():
             reviewfile = os.path.join(args.output, reviewfile)
             write_csv_headers(outfile, reviewfile)
             process_month(month, args, outfile, reviewfile)
-
-
-
-    cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
+    elif args.count:
+        total_count = 0
+        for month in timeframe:
+            count = process_month(month, args, outfile=None, reviewfile=None)
+            logging.info(f"{count} instances for {month}")
+            total_count += count
+        logging.info(f"{total_count} total instances")
+    if not args.count:
+        cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
 
 if __name__ == "__main__":
