@@ -253,9 +253,10 @@ def fetch_data_timeframe(input_dir: str) -> tuple:
     Establish a timeframe based on all directories found in the input directory.
     Used when no timeframe was given by user.
     """
-    months = [elem.replace("RC_", "") for elem in os.listdir(input_dir) if elem.startswith('RC')]
-    months = [elem.replace("RS_", "") for elem in os.listdir(input_dir) if elem.startswith('RS')]
-    months = [elem.replace(".zst", "") for elem in os.listdir(input_dir) if elem.endswith('.zst')]
+    months = [elem.replace("RC_", "") for elem in os.listdir(input_dir)]
+    months = [elem.replace("RS_", "") for elem in months]
+    months = [elem.replace(".zst", "") for elem in months if elem.endswith('.zst')]
+
     months = sorted(months)
     months = [(int(elem.split("-")[0]), int(elem.split("-")[1])) for elem in months]
     return months[0], months[-1]
@@ -312,6 +313,7 @@ def comment_regex(string) -> str:
         flag = re.search('^(\(?.+?\))\^?(.+$)', regex).group(1) # in case there is a flag of the type (?i) at the start
         expr = re.search('^(\(?.+?\))\^?(.+$)', regex).group(2)
         regex = '^' + flag + '(^>.+\n\n)*' + expr
+        logging.info(f"Regex changed to {regex}")
 
     return regex
 
@@ -364,7 +366,7 @@ def define_parser() -> argparse.ArgumentParser:
     # directories
     parser.add_argument('--input', '-I', type=dir_path, required=True,
                         help="The directory containing the input data, ie. the Pushshift data dumps.")
-    parser.add_argument('--output', '-O', type=dir_path, required=True,
+    parser.add_argument('--output', '-O', type=dir_path, required=False,
                         help="The directory where search results will be saved to.")
     
     # timeframe
@@ -400,6 +402,9 @@ def handle_args() -> argparse.Namespace:
     """Handle argument-related edge cases by throwing meaningful errors."""
     parser = define_parser()
     args = parser.parse_args()
+
+    if args.output is None and not args.count:
+        parser.error("Since you're not just counting, you need to supply an output directory.")
 
     # all search parameters are optional to allow for different types of searches
     # should they all be missing, it would lead to data overflow as every comment would be extracted
@@ -478,7 +483,8 @@ def main():
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
 
-    args.output = os.path.abspath(args.output)
+    if not args.count:
+        args.output = os.path.abspath(args.output)
 
     # Writing the CSV headers
     if not args.count:
