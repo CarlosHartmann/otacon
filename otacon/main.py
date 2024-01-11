@@ -309,10 +309,10 @@ def comment_regex(string) -> str:
     else:
         regex = string
     
-    if regex.startswith('^'):
+    if re.search('(\([^\)]+\))*^', regex):
         flag = re.search('^(\(?.+?\))\^?(.+$)', regex).group(1) # in case there is a flag of the type (?i) at the start
         expr = re.search('^(\(?.+?\))\^?(.+$)', regex).group(2)
-        regex = '^' + flag + '(^>.+\n\n)*' + expr
+        regex = flag+ '^' + r'(>.+\n\n)*' + expr
         logging.info(f"Regex changed to {regex}")
 
     return regex
