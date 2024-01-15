@@ -223,7 +223,6 @@ def read_lines_zst(file_name):
 		reader.close() 
 
 
-
 def within_timeframe(month: str, time_from: tuple, time_to: tuple) -> bool:
     """Test if a given month from the Pushshift Corpus is within the user's provided timeframe."""
     # a month's directory name has the format "RC YYYY-MM"
@@ -491,6 +490,7 @@ def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
+    logging.info(f"Searching from {timeframe[0]} to {timeframe[-1]}")
 
     if not args.count:
         args.output = os.path.abspath(args.output)
