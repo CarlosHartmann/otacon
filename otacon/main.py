@@ -139,15 +139,17 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
         return False
 
     if args.commentregex is not None:
-        if re.search(args.commentregex, comment['body']): # checks if comment regex matches at least once, matches are extracted later
+        search = re.search(args.commentregex, comment['body']) if args.case_sensitive else re.search(args.commentregex, comment['body'], re.IGNORECASE)
+        if search: # checks if comment regex matches at least once, matches are extracted later
             pass
         else:
             return False
     
     if  args.flairregex is not None:
+        search = re.search(args.flairregex, comment['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment['author_flair_text'], re.IGNORECASE)
         if comment['author_flair_text'] is None:
             return False
-        elif re.search(args.flairregex, comment['author_flair_text']): # checks if flair regex matches
+        elif search: # checks if flair regex matches
             pass
         else:
             return False
@@ -308,10 +310,15 @@ def comment_regex(string) -> str:
         regex = open(string, "r", encoding="utf-8").read()
     else:
         regex = string
-    
-    if re.search('(\([^\)]+\))*^', regex):
-        flag = re.search('^(\(?.+?\))\^?(.+$)', regex).group(1) # in case there is a flag of the type (?i) at the start
-        expr = re.search('^(\(?.+?\))\^?(.+$)', regex).group(2)
+
+    initial_regex_tester = "^((?:\(\?<[=!].*?\)))?(\^)" # to check if expression has ^ at beginning, while also allow for look-behind statements that can contain ^
+
+    if re.search(initial_regex_tester, regex):
+        flag = re.search(f'{initial_regex_tester}(.+$)', regex).group(1) # in case there is a flag of the type (?i) at the start
+        flag = '' if flag is None else flag
+
+        expr = re.search(f'{initial_regex_tester}(.+$)', regex).group(3)
+        
         regex = flag+ '^' + r'(>.+\n\n)*' + expr
         logging.info(f"Regex changed to {regex}")
 
@@ -384,6 +391,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--flairregex', '-FR', type=comment_regex, required=False,
                         help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
+    parser.add_argument('--case-sensitive', '-CS', action='store_true',
+                        help="Makes search case-sensitive if any regex (comment or flair) was supplied.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
                         help="Popularity threshold: Filters out comments with a score lower than the given value.")
     parser.add_argument('--toplevel', '-TL', action='store_true', required=False,
