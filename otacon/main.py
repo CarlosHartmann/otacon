@@ -154,6 +154,19 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
         else:
             return False
     
+    if args.spacy_search:
+        token = args.spacy_search[0]
+        pos = args.spacy_search[1]
+        text = comment['body']
+        if token in text:
+            doc = args.nlp(text)
+            tk_list = [(elem.text, elem.pos_) for elem in doc]
+            if (token, pos) in tk_list:
+                pass
+            else:
+                return False
+
+    
     h = hash(json.dumps(comment, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
     if h in hash_list: # hash check with all previous comments in case the data contain redundancies
         return False
@@ -364,6 +377,10 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     return outfile_name
 
 
+def pos_tuple(text):
+    tk, pos = text.split()[0], text.split()[1]
+    return (tk, pos)
+
 
 def define_parser() -> argparse.ArgumentParser:
     """Define console argument parser."""
@@ -396,6 +413,10 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Popularity threshold: Filters out comments with a score lower than the given value.")
     parser.add_argument('--toplevel', '-TL', action='store_true', required=False,
                         help="Only consider top-level comments, ie. comments not posted as a reply to another comment, but directly to a post.")
+    parser.add_argument('--spacy-search', '-SS', type=pos_tuple,
+                        help="Supply a token with expected POS tag to search how often this token is found with that POS-tag. Requires language specification")
+    parser.add_argument('--language', '-L', required=False,
+                        help="Language to be used for spacy search.")
     
     # special
     parser.add_argument('--count', '-C', action='store_true',
@@ -437,6 +458,9 @@ def handle_args() -> argparse.Namespace:
         logging.info("No timeframe supplied. Searching all months found in the input directory.")
         args.time_from, args.time_to = fetch_data_timeframe(args.input)
     
+    if args.spacy_search and not args.language:
+        parser.error("You did not supply a language for the SpaCy search.")
+
     return args
 
 
@@ -486,11 +510,27 @@ def process_month(month, args, outfile, reviewfile):
         return count_for_month
 
 
+def fetch_model(lang):
+    if lang.lower() == "german" or lang.lower() == "deutsch":
+        return 'de_dep_news_trf'
+    else:
+        logging.info("Only German spacy models are currently installed.")
+        exit()
+
+
 def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
     logging.info(f"Searching from {timeframe[0]} to {timeframe[-1]}")
+
+    if args.spacy_search:
+        logging.info("Importing spacy…")
+        import spacy
+        model = fetch_model(args.language)
+        logging.info(f"Importing {model}…")
+        nlp = spacy.load(model)
+        args.nlp = nlp
 
     if not args.count:
         args.output = os.path.abspath(args.output)
@@ -511,6 +551,7 @@ def main():
             logging.info(f"{count} instances for {month}")
             total_count += count
         logging.info(f"{total_count} total instances")
+
     if not args.count:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
