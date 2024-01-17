@@ -160,8 +160,8 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
         text = comment['body']
         if token in text:
             doc = args.nlp(text)
-            tk_list = [(elem.text, elem.pos_) for elem in doc]
-            if (token, pos) in tk_list:
+            tk_list = [(elem.text.lower(), elem.pos_) for elem in doc]
+            if (token.lower(), pos) in tk_list:
                 pass
             else:
                 return False
