@@ -165,6 +165,8 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
                 pass
             else:
                 return False
+        else:
+            return False
 
     
     h = hash(json.dumps(comment, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
@@ -378,7 +380,7 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
 
 
 def pos_tuple(text):
-    tk, pos = text.split()[0], text.split()[1]
+    tk, pos = text.split(',')[0], text.split(',')[1]
     return (tk, pos)
 
 
