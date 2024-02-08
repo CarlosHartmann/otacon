@@ -37,6 +37,7 @@ import os
 import re
 import csv
 import json
+import random
 import logging
 import calendar
 import argparse
@@ -269,7 +270,7 @@ def fetch_data_timeframe(input_dir: str) -> tuple:
     Establish a timeframe based on all directories found in the input directory.
     Used when no timeframe was given by user.
     """
-    months = [elem.replace("RC_", "") for elem in os.listdir(input_dir)]
+    months = [elem.replace("RC_", "") for elem in os.listdir(input_dir) if not elem.endswith(".txt")]
     months = [elem.replace("RS_", "") for elem in months]
     months = [elem.replace(".zst", "") for elem in months if elem.endswith('.zst')]
 
@@ -312,6 +313,18 @@ def dir_path(string) -> str:
         return string
     else:
         raise NotADirectoryError(string)
+
+
+def sample_float(num) -> float:
+    try:
+        num = float(num)
+    except:
+        raise TypeError(f"{num} is not a recognized number format.")
+    
+    if num > 1.0 or num < 0:
+        raise TypeError("Sample size must be given as number between 0.0 and 1.0")
+    
+    return num
 
 
 def comment_regex(string) -> str:
@@ -367,6 +380,8 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
         outfile_name += "_score_over_" + str(args.popularity)
     if args.toplevel:
         outfile_name += "_toplevel-only_"
+    if args.sample:
+        outfile_name += "_sample-" + str(args.sample) + "_"
     # add time of search
     outfile_name += "_executed-at_" + datetime.now().strftime('%Y-%m-%d_at_%Hh-%Mm-%Ss')
     # sanitize to avoid illegal filename characters
@@ -425,6 +440,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Only counts the relevant comments per month and prints the statistic to console.")
     parser.add_argument('--include_quoted', action='store_true',
                         help="Include regex matches that are inside Reddit quotes (lines starting with >, often but not exclusively used to quote other Reddit users)")
+    parser.add_argument('--sample', '-SMP', type=sample_float, required=False,
+                        help="Retrieve a sample of results fitting the other parameters. Sample size is given as float between 0.0 and 1.0 where 1.0 returns 100% of results")
 
     return parser
 
@@ -491,25 +508,64 @@ def get_data_file(path: str) -> str:
     exit()
 
 
+def get_samplesize(month: str, sample_proportion: float, input_dir) -> int:
+    "Get the number of data points that shall be considered based on the provided %"
+    month = month.replace("RC_", "")
+    month = month.replace("RS_", "")
+    month = month.replace(".zst", "")
+    year = month.split("-")[0] # get year string from the format 'RC_YYYY-MM.zst'
+    m_num = month.split("-")[1] # get month number as string
+
+    countfile = os.path.join(input_dir, "monthly-counts.txt")
+    with open(countfile, "r") as infile:
+        reader = csv.reader(infile, delimiter='\t')
+        for row in reader:
+            y, m, count = row[0], row[1], int(row[2])
+            if y == year and m == m_num:
+                samplesize = round(sample_proportion * count)
+                logging.info(f"With a sample proportion of {sample_proportion}, {samplesize} comments will be looked at.")
+                return samplesize, count
+
+
+def get_samplepoints(month, sample_proportion, input_dir):
+    "Find the needed samplesize and then generate a list of indexes to consider"
+    samplesize, count = get_samplesize(month, sample_proportion, input_dir)
+    all_data_points = list(range(0, count))
+    sample = random.sample(all_data_points, samplesize)
+    return sorted(sample)
+
+
 def process_month(month, args, outfile, reviewfile):
     log_month(month)
-    count_for_month = 0
+    relevant_count = 0
+    total_count = -1
     infile = args.input + "/" + month
+
+    if args.sample:
+        sample_points = get_samplepoints(month, args.sample, args.input)
+
     for comment in read_redditfile(infile):
-        if relevant(comment, args):
-            if not args.count:
+        total_count += 1
+        if not args.sample or (args.sample and total_count == sample_points[0]):
+
+            if args.sample:
+                del sample_points[0]
+                if len(sample_points) == 0:
+                    break
+            
+            if relevant(comment, args):
+                relevant_count += 1
                 with open(outfile, "a", encoding="utf-8") as outf, \
-                     open(reviewfile, "a", encoding="utf-8") as reviewf:
+                        open(reviewfile, "a", encoding="utf-8") as reviewf:
                     filtered, reason = filter(comment, args.popularity)
                     if not filtered:
                         extract(comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
                     else:
                         extract(comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
-            else:
-                count_for_month += 1
+        
     
     if args.count:
-        return count_for_month
+        return relevant_count
 
 
 def fetch_model(lang):
