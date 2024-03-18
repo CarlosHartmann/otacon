@@ -147,13 +147,11 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
             return False
     
     if  args.flairregex is not None:
-        search = re.search(args.flairregex, comment['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment['author_flair_text'], re.IGNORECASE)
         if comment['author_flair_text'] is None:
             return False
-        elif search: # checks if flair regex matches
-            pass
         else:
-            return False
+            search = re.search(args.flairregex, comment['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment['author_flair_text'], re.IGNORECASE)
+            return True if search else False
     
     if args.spacy_search:
         token = args.spacy_search[0]
