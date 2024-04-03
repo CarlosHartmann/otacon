@@ -71,13 +71,19 @@ def inside_quote(text: str, span: tuple) -> bool:
     return True if re.search('&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a quote symbol and the match
 
 
-def extract(comment: dict, regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
+def extract(args, comment: dict, regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
     """
     Extract a comment text and all relevant metadata.
     If no regex is supplied, extract the whole comment leaving the span field blank.
     If a regex is supplied, extract each match separately with its span info.
     Discard regex matches found inside of a quoted line.
     """
+    
+    if args.return_all:
+        comment = json.dumps(comment)
+        _=outfile.write(comment+'\n')
+    
+    
     text = comment['body']
     user = comment['author']
     flairtext = comment['author_flair_text']
@@ -387,7 +393,7 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     # specify the month of the reddit data
     outfile_name = outfile_name + "_" + month if month is not None else outfile_name
     # add file ending
-    outfile_name += ".csv"
+    outfile_name += ".csv" if not args.return_all else ".jsonl"
 
     return outfile_name
 
@@ -440,6 +446,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Include regex matches that are inside Reddit quotes (lines starting with >, often but not exclusively used to quote other Reddit users)")
     parser.add_argument('--sample', '-SMP', type=sample_float, required=False,
                         help="Retrieve a sample of results fitting the other parameters. Sample size is given as float between 0.0 and 1.0 where 1.0 returns 100% of results")
+    parser.add_argument('--return_all', action='store_true', required=False,
+                        help="Will return every search hit in its original and complete JSON form.")
 
     return parser
 
@@ -557,9 +565,9 @@ def process_month(month, args, outfile, reviewfile):
                         open(reviewfile, "a", encoding="utf-8") as reviewf:
                     filtered, reason = filter(comment, args.popularity)
                     if not filtered:
-                        extract(comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
+                        extract(args, comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
                     else:
-                        extract(comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
+                        extract(args, comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
         
     
     if args.count:
@@ -596,9 +604,10 @@ def main():
         for month in timeframe:
             outfile = assemble_outfile_name(args, month)
             outfile = os.path.join(args.output, outfile)
-            reviewfile = outfile[:-4] + "_filtered-out_matches.csv"
+            reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
             reviewfile = os.path.join(args.output, reviewfile)
-            write_csv_headers(outfile, reviewfile)
+            if not args.return_all:
+                write_csv_headers(outfile, reviewfile)
             process_month(month, args, outfile, reviewfile)
     elif args.count:
         total_count = 0

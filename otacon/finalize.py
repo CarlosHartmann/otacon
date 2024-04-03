@@ -7,6 +7,7 @@ Warning: This assumes that all files in a given directory belong to the same dat
 import os
 import re
 import csv
+from subprocess import call
 
 
 def extract_time_info(filename):
@@ -18,13 +19,17 @@ def extract_time_info(filename):
 
 def gather_output_files(directory):
     '''Returns list of files that are assumed to belong to the output.'''
-    return [elem for elem in os.listdir(directory) if elem.endswith(".csv") and not elem.startswith(".") and re.search('\d{4}\-\d{2}', elem)]
+    return [elem for elem in os.listdir(directory) if elem.endswith(".csv") or elem.endswith(".jsonl") and not elem.startswith(".") and re.search('\d{4}\-\d{2}', elem)]
 
 
 def cleanup(directory, extraction_name):
     directory = os.path.abspath(directory)
     f_list = gather_output_files(directory)
     os.chdir(directory)
+
+    if f_list[0].endswith(".jsonl"):
+        script = f'cat {' '.join(f_list)} > {os.path.join(directory, extraction_name)}'
+        call(script, shell=True)
 
     with open(os.path.join(directory, extraction_name), "w", encoding="utf-8") as outfile:
         csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
