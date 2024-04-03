@@ -83,33 +83,33 @@ def extract(args, comment: dict, regex: str, include_quoted: bool, outfile: Text
         comment = json.dumps(comment)
         _=outfile.write(comment+'\n')
     
-    
-    text = comment['body']
-    user = comment['author']
-    flairtext = comment['author_flair_text']
-    subreddit = comment['subreddit']
-    score = comment['score']
-    date = comment['created_utc']
-    
-    # assemble a standard Reddit URL for older data
-    url_base = "https://www.reddit.com/r/"+subreddit+"/comments/"
-    oldschool_link = url_base + comment['link_id'].split("_")[1] + "//" + comment['id']
-
-    # choose the newer "permalink" metadata instead if available
-    permalink = "https://www.reddit.com" + comment['permalink'] if 'permalink' in comment.keys() else oldschool_link
-
-    csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-
-    if regex is None:
-        span = None
-        row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
-        csvwriter.writerow(row)
     else:
-        for span in find_all_matches(text, regex):
-            if not include_quoted and not inside_quote(text, span):
-                span = str(span)
-                row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
-                csvwriter.writerow(row)
+        text = comment['body']
+        user = comment['author']
+        flairtext = comment['author_flair_text']
+        subreddit = comment['subreddit']
+        score = comment['score']
+        date = comment['created_utc']
+        
+        # assemble a standard Reddit URL for older data
+        url_base = "https://www.reddit.com/r/"+subreddit+"/comments/"
+        oldschool_link = url_base + comment['link_id'].split("_")[1] + "//" + comment['id']
+
+        # choose the newer "permalink" metadata instead if available
+        permalink = "https://www.reddit.com" + comment['permalink'] if 'permalink' in comment.keys() else oldschool_link
+
+        csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+        if regex is None:
+            span = None
+            row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+            csvwriter.writerow(row)
+        else:
+            for span in find_all_matches(text, regex):
+                if not include_quoted and not inside_quote(text, span):
+                    span = str(span)
+                    row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+                    csvwriter.writerow(row)
 
 
 def filter(comment: dict, popularity_threshold: int) -> tuple:
