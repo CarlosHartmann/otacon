@@ -448,6 +448,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Retrieve a sample of results fitting the other parameters. Sample size is given as float between 0.0 and 1.0 where 1.0 returns 100% of results")
     parser.add_argument('--return_all', action='store_true', required=False,
                         help="Will return every search hit in its original and complete JSON form.")
+    parser.add_argument('--dont_filter', action='store_true', required=False,
+                        help="Skip any filtering.")
 
     return parser
 
@@ -563,7 +565,8 @@ def process_month(month, args, outfile, reviewfile):
                 relevant_count += 1
                 with open(outfile, "a", encoding="utf-8") as outf, \
                         open(reviewfile, "a", encoding="utf-8") as reviewf:
-                    filtered, reason = filter(comment, args.popularity)
+                    
+                    filtered, reason = filter(comment, args.popularity) if not args.dont_filter else False, None
                     if not filtered:
                         extract(args, comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
                     else:
