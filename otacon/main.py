@@ -37,6 +37,7 @@ import os
 import re
 import csv
 import json
+import pprint
 import random
 import logging
 import calendar
@@ -52,6 +53,9 @@ from otacon.finalize import *
 
 # keep track of already-processed comments throughout function calls
 hash_list = []
+
+# return stats from which subreddits the relevant comments were and how many per subreddits
+stats_dict = {}
 
 
 def find_all_matches(text, regex):
@@ -179,6 +183,8 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
         return False
     else:
         hash_list.append(h)
+        stats_dict.setdefault(comment['subreddit'], 0)
+        stats_dict[comment['subreddit']] += 1  
         return True
 
 
@@ -488,6 +494,10 @@ def handle_args() -> argparse.Namespace:
     if args.spacy_search and not args.language:
         parser.error("You did not supply a language for the SpaCy search.")
 
+    # makes checking slightly more efficient
+    if len(args.name) > 0:
+        args.name = set(args.name)
+
     return args
 
 
@@ -563,14 +573,15 @@ def process_month(month, args, outfile, reviewfile):
             
             if relevant(comment, args):
                 relevant_count += 1
-                with open(outfile, "a", encoding="utf-8") as outf, \
-                        open(reviewfile, "a", encoding="utf-8") as reviewf:
-                    
-                    filtered, reason = filter(comment, args.popularity) if not args.dont_filter else False, None
-                    if not filtered:
-                        extract(args, comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
-                    else:
-                        extract(args, comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
+                if not args.count:
+                    with open(outfile, "a", encoding="utf-8") as outf, \
+                            open(reviewfile, "a", encoding="utf-8") as reviewf:
+                        
+                        filtered, reason = filter(comment, args.popularity) if not args.dont_filter else False, None
+                        if not filtered:
+                            extract(args, comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
+                        else:
+                            extract(args, comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
         
     
     if args.count:
@@ -618,10 +629,22 @@ def main():
             count = process_month(month, args, outfile=None, reviewfile=None)
             logging.info(f"{count} instances for {month}")
             total_count += count
+            if args.output:
+                stats_file = os.path.join(args.output, f'otacon_search_stats_{month}.txt')
+                with open(stats_file, "w") as outfile:
+                    _=outfile.write(json.dumps(stats_dict))
         logging.info(f"{total_count} total instances")
 
     if not args.count:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
+
+    print("Statistics of relevant search hits by Subreddit:")
+    pprint.pp(stats_dict)
+    if args.output:
+        stats_file = os.path.join(args.output, 'otacon_search_stats.txt')
+        with open(stats_file, "w") as outfile:
+            _=outfile.write(json.dumps(stats_dict))
+    
 
 
 if __name__ == "__main__":
