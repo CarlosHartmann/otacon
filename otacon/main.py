@@ -75,32 +75,33 @@ def inside_quote(text: str, span: tuple) -> bool:
     return True if re.search('&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a quote symbol and the match
 
 
-def extract(args, comment: dict, regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
+def extract(args, comment_or_post: dict, regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
     """
-    Extract a comment text and all relevant metadata.
+    Extract a comment or post text and all relevant metadata.
     If no regex is supplied, extract the whole comment leaving the span field blank.
     If a regex is supplied, extract each match separately with its span info.
     Discard regex matches found inside of a quoted line.
     """
     
     if args.return_all:
-        comment = json.dumps(comment)
-        _=outfile.write(comment+'\n')
+        comment_or_post = json.dumps(comment_or_post)
+        _=outfile.write(comment_or_post+'\n')
     
     else:
-        text = comment['body']
-        user = comment['author']
-        flairtext = comment['author_flair_text']
-        subreddit = comment['subreddit']
-        score = comment['score']
-        date = comment['created_utc']
+        text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
+        user = comment_or_post['author']
+        flairtext = comment_or_post['author_flair_text']
+        subreddit = comment_or_post['subreddit']
+        score = comment_or_post['score']
+        date = comment_or_post['created_utc']
         
         # assemble a standard Reddit URL for older data
         url_base = "https://www.reddit.com/r/"+subreddit+"/comments/"
-        oldschool_link = url_base + comment['link_id'].split("_")[1] + "//" + comment['id']
+        
+        oldschool_link = url_base + comment_or_post['link_id'].split("_")[1] + "//" + comment_or_post['id'] if 'link_id' in comment_or_post.keys() else None
 
         # choose the newer "permalink" metadata instead if available
-        permalink = "https://www.reddit.com" + comment['permalink'] if 'permalink' in comment.keys() else oldschool_link
+        permalink = "https://www.reddit.com" + comment_or_post['permalink'] if 'permalink' in comment_or_post.keys() else oldschool_link
 
         csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
@@ -116,18 +117,18 @@ def extract(args, comment: dict, regex: str, include_quoted: bool, outfile: Text
                     csvwriter.writerow(row)
 
 
-def filter(comment: dict, popularity_threshold: int) -> tuple:
+def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
     """
-    Test if a Reddit comment breaks any of the filtering rules.
+    Test if a Reddit comment_or_post breaks any of the filtering rules.
     This is for nuanced criteria so positives are kept for manual review.
     """
     if popularity_threshold is not None:
-        if comment['score'] < popularity_threshold:
+        if comment_or_post['score'] < popularity_threshold:
             return True, "score below defined threshold"
-    
-    text = comment['body']
-    #if nlp(text)._.is_profane:
-    #    return True, "offensive language"
+    if 'body' in list(comment_or_post.keys()):
+        text = comment_or_post['body']
+    else:
+        text = comment_or_post['selftext']
 
     if "i'm a bot" in text.lower():
         return True, "non-human generated"
@@ -135,38 +136,42 @@ def filter(comment: dict, popularity_threshold: int) -> tuple:
     return False, None
 
 
-def relevant(comment: dict, args: argparse.Namespace) -> bool:
+def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     """
-    Test if a Reddit comment is at all relevant to the search.
+    Test if a Reddit comment or post is at all relevant to the search.
     This is for broad criteria so negatives are discarded.
     The filters are ordered by how unlikely they are to pass for efficiency.
     """
     if args.name is not None: # if a subreddit or user was specified as argument, the comment's metadata are checked accordingly
         src = 'author' if args.src == 'user' else 'subreddit' # the username is called 'author' in the data
-        if comment[src] not in args.name: 
+        
+        if src not in comment_or_post.keys() or comment_or_post[src] not in args.name: 
             return False
     
-    if args.toplevel and not comment['parent_id'].startswith('t3'):
+    if args.toplevel and not comment_or_post['parent_id'].startswith('t3'):
         return False
+    
+    regex = args.commentregex if args.searchmode == 'comms' else args.postregex
+    body = 'body' if args.searchmode == 'comms' else 'selftext'
 
-    if args.commentregex is not None:
-        search = re.search(args.commentregex, comment['body']) if args.case_sensitive else re.search(args.commentregex, comment['body'], re.IGNORECASE)
+    if regex is not None:
+        search = re.search(regex, comment_or_post[body]) if args.case_sensitive else re.search(regex, comment_or_post['body'], re.IGNORECASE)
         if search: # checks if comment regex matches at least once, matches are extracted later
             pass
         else:
             return False
     
     if  args.flairregex is not None:
-        if comment['author_flair_text'] is None:
+        if comment_or_post['author_flair_text'] is None:
             return False
         else:
-            search = re.search(args.flairregex, comment['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment['author_flair_text'], re.IGNORECASE)
+            search = re.search(args.flairregex, comment_or_post['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment_or_post['author_flair_text'], re.IGNORECASE)
             return True if search else False
     
     if args.spacy_search:
         token = args.spacy_search[0]
         pos = args.spacy_search[1]
-        text = comment['body']
+        text = comment_or_post[body]
         if token in text:
             doc = args.nlp(text)
             tk_list = [(elem.text.lower(), elem.pos_) for elem in doc]
@@ -178,13 +183,13 @@ def relevant(comment: dict, args: argparse.Namespace) -> bool:
             return False
 
     
-    h = hash(json.dumps(comment, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
-    if h in hash_list: # hash check with all previous comments in case the data contain redundancies
+    h = hash(json.dumps(comment_or_post, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
+    if h in hash_list: # hash check with all previous comments/posts in case the data contain redundancies
         return False
     else:
         hash_list.append(h)
-        stats_dict.setdefault(comment['subreddit'], 0)
-        stats_dict[comment['subreddit']] += 1  
+        stats_dict.setdefault(comment_or_post['subreddit'], 0)
+        stats_dict[comment_or_post['subreddit']] += 1  
         return True
 
 
@@ -213,8 +218,12 @@ def read_redditfile(file: str) -> dict:
                 l = json.loads(line)
                 yield(l)
     else:
-        for comment, some_int in read_lines_zst(file):
-            yield json.loads(comment)
+        for comment_or_post, some_int in read_lines_zst(file):
+            try:
+                yield json.loads(comment_or_post)
+            except json.decoder.JSONDecodeError:
+                print(f"Encountered a ZST parsing error in {file}")
+                pass
 
 def read_and_decode(reader, chunk_size, max_window_size, previous_chunk=None, bytes_read=0):
 	chunk = reader.read(chunk_size)
@@ -236,16 +245,16 @@ def read_lines_zst(file_name):
 		reader = ZstdDecompressor(max_window_size=2**31).stream_reader(file_handle)
 		while True:
 			chunk = read_and_decode(reader, 2**27, (2**29) * 2)
-
+			
 			if not chunk:
 				break
 			lines = (buffer + chunk).split("\n")
-
+			
 			for line in lines[:-1]:
 				yield line, file_handle.tell()
-
+			
 			buffer = lines[-1]
-
+		
 		reader.close() 
 
 
@@ -367,7 +376,7 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     Assemble the outfile name out of the search parameters in human-readable and sanitized form.
     Full path is returned.
     """
-    outfile_name = "comment_extraction"
+    outfile_name = "comment_extraction" if args.searchmode == 'comms' else 'submissions_extraction'
     # add regex input
     if args.commentregex is not None:
         outfile_name += "_matching_'" + args.commentregex
@@ -434,6 +443,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--flairregex', '-FR', type=comment_regex, required=False,
                         help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
+    parser.add_argument('--postregex', '-PR', type=comment_regex, required=False, 
+                        help="The regex to search the post text with. Will only be used if the source is identified to contain the word 'submissions.'")
     parser.add_argument('--case-sensitive', '-CS', action='store_true',
                         help="Makes search case-sensitive if any regex (comment or flair) was supplied.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
@@ -497,6 +508,13 @@ def handle_args() -> argparse.Namespace:
     # makes checking slightly more efficient
     if len(args.name) > 0:
         args.name = set(args.name)
+    
+    if 'submissions' in args.input:
+        args.searchmode = 'subs'
+    elif 'comments' in args.input:
+        args.searchmode = 'comms'
+    else:
+        args.searchmode = 'comms' # at least for now, no third search mode implemented, defaults to comments
 
     return args
 
@@ -562,7 +580,7 @@ def process_month(month, args, outfile, reviewfile):
     if args.sample:
         sample_points = get_samplepoints(month, args.sample, args.input)
 
-    for comment in read_redditfile(infile):
+    for comment_or_post in read_redditfile(infile):
         total_count += 1
         if not args.sample or (args.sample and total_count == sample_points[0]):
 
@@ -571,17 +589,17 @@ def process_month(month, args, outfile, reviewfile):
                 if len(sample_points) == 0:
                     break
             
-            if relevant(comment, args):
+            if relevant(comment_or_post, args):
                 relevant_count += 1
                 if not args.count:
                     with open(outfile, "a", encoding="utf-8") as outf, \
                             open(reviewfile, "a", encoding="utf-8") as reviewf:
                         
-                        filtered, reason = filter(comment, args.popularity) if not args.dont_filter else False, None
+                        filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
                         if not filtered:
-                            extract(args, comment, args.commentregex, args.include_quoted, outf, filter_reason=None)
+                            extract(args, comment_or_post, args.commentregex, args.include_quoted, outf, filter_reason=None)
                         else:
-                            extract(args, comment, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
+                            extract(args, comment_or_post, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
         
     
     if args.count:
