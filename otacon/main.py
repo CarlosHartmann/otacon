@@ -145,7 +145,7 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     if args.name is not None: # if a subreddit or user was specified as argument, the comment's metadata are checked accordingly
         src = 'author' if args.src == 'user' else 'subreddit' # the username is called 'author' in the data
         
-        if src not in comment_or_post.keys() or comment_or_post[src] not in args.name: 
+        if src not in comment_or_post.keys() or comment_or_post[src].lower() not in args.name: 
             return False
     
     if args.toplevel and not comment_or_post['parent_id'].startswith('t3'):
@@ -467,6 +467,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Will return every search hit in its original and complete JSON form.")
     parser.add_argument('--dont_filter', action='store_true', required=False,
                         help="Skip any filtering.")
+    parser.add_argument('--reverse_order', action='store_true', required=False,
+                        help="Iterate through the relevant months in reverse order, i.e. from most recent to oldest.")
 
     return parser
 
@@ -507,6 +509,7 @@ def handle_args() -> argparse.Namespace:
 
     # makes checking slightly more efficient
     if len(args.name) > 0:
+        args.name = [elem.lower() for elem in args.name]
         args.name = set(args.name)
     
     if 'submissions' in args.input:
@@ -618,6 +621,8 @@ def main():
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
+    if args.reverse_order:
+        timeframe = timeframe.reverse()
     logging.info(f"Searching from {timeframe[0]} to {timeframe[-1]}")
 
     if args.spacy_search:
