@@ -622,7 +622,7 @@ def main():
     args = handle_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
     if args.reverse_order:
-        timeframe = timeframe.reverse()
+        timeframe.reverse()
     logging.info(f"Searching from {timeframe[0]} to {timeframe[-1]}")
 
     if args.spacy_search:
