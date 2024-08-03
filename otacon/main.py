@@ -508,7 +508,7 @@ def handle_args() -> argparse.Namespace:
         parser.error("You did not supply a language for the SpaCy search.")
 
     # makes checking slightly more efficient
-    if len(args.name) > 0:
+    if args.name is not None:
         args.name = [elem.lower() for elem in args.name]
         args.name = set(args.name)
     
