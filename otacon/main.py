@@ -155,7 +155,7 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     body = 'body' if args.searchmode == 'comms' else 'selftext'
 
     if regex is not None:
-        search = re.search(regex, comment_or_post[body]) if args.case_sensitive else re.search(regex, comment_or_post['body'], re.IGNORECASE)
+        search = re.search(regex, comment_or_post[body]) if args.case_sensitive else re.search(regex, comment_or_post[body], re.IGNORECASE)
         if search: # checks if comment regex matches at least once, matches are extracted later
             pass
         else:
@@ -384,7 +384,10 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
         outfile_name += "_"
     # add user/subreddit if provided
     if args.name is not None:
-        outfile_name += "_from_" + args.src + "_" + ';'.join(args.name)
+        if len(args.name) < 5:
+            outfile_name += "_from_" + args.src + "_" + ';'.join(args.name)
+        else:
+            outfile_name += "_from_" + args.src + "_" + ';'.join(list(args.name)[:5])
     # add timeframe info
     # this allows for the name to make sense with any or both of the timeframe bounds absent or present
     if month is not None:
