@@ -26,28 +26,27 @@ def cleanup(directory, extraction_name):
     directory = os.path.abspath(directory)
     f_list = gather_output_files(directory)
     os.chdir(directory)
-
+    
     if f_list[0].endswith(".jsonl"):
         script = f'cat {" ".join(f_list)} > {os.path.join(directory, extraction_name)}'
         call(script, shell=True)
     
     else:
-
+        
         with open(os.path.join(directory, extraction_name), "w", encoding="utf-8") as outfile:
             csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
             csvwriter.writerow(['type', 'year', 'month', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'date', 'permalink', 'filter reason'])
             for file in f_list:
                 type = "comment" if file.startswith("comment") else "submission"
                 year, month = extract_time_info(file)
-
+                
                 with open(file, "r", encoding="utf-8") as infile:
                     csvreader = csv.reader(infile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
                     _ = next(csvreader)
                     for row in csvreader:
                         if row[0] != 'text':
                             csvwriter.writerow([type, year, month] + row)
-
-                            
+    
     for elem in f_list:
         os.remove(elem)
 

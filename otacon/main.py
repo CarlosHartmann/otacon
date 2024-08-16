@@ -377,11 +377,7 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     Full path is returned.
     """
     outfile_name = "comment_extraction" if args.searchmode == 'comms' else 'submissions_extraction'
-    # add regex input
-    if args.commentregex is not None:
-        outfile_name += "_matching_'" + args.commentregex
-    else:
-        outfile_name += "_"
+
     # add user/subreddit if provided
     if args.name is not None:
         if len(args.name) < 5:
@@ -664,8 +660,6 @@ def main():
     if not args.count:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
-    print("Statistics of relevant search hits by Subreddit:")
-    pprint.pp(stats_dict)
     if args.output:
         stats_file = os.path.join(args.output, 'otacon_search_stats.txt')
         with open(stats_file, "w") as outfile:
