@@ -161,13 +161,18 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
         else:
             return False
     
-    if  args.flairregex is not None:
+    if args.flairregex is not None:
         if comment_or_post['author_flair_text'] is None:
             return False
         else:
             search = re.search(args.flairregex, comment_or_post['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment_or_post['author_flair_text'], re.IGNORECASE)
             return True if search else False
     
+    if args.userregex is not None:
+        search = re.search(args.userregex, comment_or_post['author']) if args.case_sensitive else re.search(args.userregex, comment_or_post['author'], re.IGNORECASE)
+        return True if search else False
+
+
     if args.spacy_search:
         token = args.spacy_search[0]
         pos = args.spacy_search[1]
@@ -444,6 +449,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--postregex', '-PR', type=comment_regex, required=False, 
                         help="The regex to search the post text with. Will only be used if the source is identified to contain the word 'submissions.'")
+    parser.add_argument('--userregex', '-UR', type=comment_regex, required=False,
+                        help="The regex to search the user names with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--case-sensitive', '-CS', action='store_true',
                         help="Makes search case-sensitive if any regex (comment or flair) was supplied.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
@@ -483,7 +490,7 @@ def handle_args() -> argparse.Namespace:
     # all search parameters are optional to allow for different types of searches
     # should they all be missing, it would lead to data overflow as every comment would be extracted
     # this ignores the popularity and toplevel arguments because they alone would still lead to overflow
-    if args.time_from is None and args.time_to is None and args.src is None and args.commentregex is None and args.flairregex is None:
+    if args.time_from is None and args.time_to is None and args.src is None and args.commentregex is None and args.flairregex is None and args.userregex is None:
         parser.error("Not enough parameters supplied. Search would return too many comments.")
 
     # the 'src' argument is required if 'name' is given, however both are optional
