@@ -1,0 +1,1 @@
+(?:(?<=^)|(?<=\W))(it|he|she|its|his|him|her|they|them|hers|their|theirs|itself|himself|herself|themself|themselfs|themselves)(?=$|(?=\W))
