@@ -403,10 +403,8 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
         outfile_name += "_score_over_" + str(args.popularity)
     if args.toplevel:
         outfile_name += "_toplevel-only_"
-    if args.sample_proportion:
-        outfile_name += "_sample-proportion-" + str(args.sample_proportion) + "_"
-    if args.sample_number:
-        outfile_name += "_samplesize-" + str(args.sample_number) + "_"
+    if args.sample:
+        outfile_name += "_sample-" + str(args.sample) + "_"
     # add time of search
     outfile_name += "_executed-at_" + datetime.now().strftime('%Y-%m-%d_at_%Hh-%Mm-%Ss')
     # sanitize to avoid illegal filename characters
@@ -469,10 +467,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Only counts the relevant comments per month and prints the statistic to console.")
     parser.add_argument('--include_quoted', action='store_true',
                         help="Include regex matches that are inside Reddit quotes (lines starting with >, often but not exclusively used to quote other Reddit users)")
-    parser.add_argument('--sample_proportion', type=sample_float, required=False,
-                        help="Only consider a part of the total available data points in each month. Sample size is given as float between 0.0 and 1.0 where 1.0 returns 100% of results")
-    parser.add_argument('--sample_number', type=int, required=False,
-                        help="Define a fixed number of relevant search results to return. Will be pulled at random.")
+    parser.add_argument('--sample', '-SMP', type=sample_float, required=False,
+                        help="Retrieve a sample of results fitting the other parameters. Sample size is given as float between 0.0 and 1.0 where 1.0 returns 100% of results")
     parser.add_argument('--return_all', action='store_true', required=False,
                         help="Will return every search hit in its original and complete JSON form.")
     parser.add_argument('--dont_filter', action='store_true', required=False,
@@ -586,43 +582,37 @@ def get_samplepoints(month, sample_proportion, input_dir):
 
 def process_month(month, args, outfile, reviewfile):
     log_month(month)
-    relevant_list = []
+    relevant_count = 0
     total_count = -1
     infile = args.input + "/" + month
 
-    if args.sample_proportion:
-        sample_points = get_samplepoints(month, args.sample_proportion, args.input)
+    if args.sample:
+        sample_points = get_samplepoints(month, args.sample, args.input)
 
     for comment_or_post in read_redditfile(infile):
         total_count += 1
-        if not args.sample_proportion or (args.sample_proportion and total_count == sample_points[0]):
+        if not args.sample or (args.sample and total_count == sample_points[0]):
 
-            if args.sample_proportion:
+            if args.sample:
                 del sample_points[0]
                 if len(sample_points) == 0:
                     break
             
             if relevant(comment_or_post, args):
-                relevant_list.append(comment_or_post)
-
+                relevant_count += 1
+                if not args.count:
+                    with open(outfile, "a", encoding="utf-8") as outf, \
+                            open(reviewfile, "a", encoding="utf-8") as reviewf:
+                        
+                        filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
+                        if not filtered:
+                            extract(args, comment_or_post, args.commentregex, args.include_quoted, outf, filter_reason=None)
+                        else:
+                            extract(args, comment_or_post, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
+        
     
     if args.count:
-        return len(relevant_list)
-    elif not args.count:
-
-        if args.sample_number:
-            relevant_list = random.sample(relevant_list, args.sample_number)
-
-        for comment_or_post in relevant_list:
-            regex = args.commentregex if args.searchmode == 'comms' else args.postregex
-            with open(outfile, "a", encoding="utf-8") as outf, \
-                    open(reviewfile, "a", encoding="utf-8") as reviewf:
-                
-                filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
-                if not filtered:
-                    extract(args, comment_or_post, regex, args.include_quoted, outf, filter_reason=None)
-                else:
-                    extract(args, comment_or_post, regex, args.include_quoted, reviewf, filter_reason=reason)
+        return relevant_count
 
 
 def fetch_model(lang):
