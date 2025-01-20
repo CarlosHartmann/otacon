@@ -30,6 +30,8 @@ def cleanup(directory, extraction_name):
     if f_list[0].endswith(".jsonl"):
         script = f'cat {" ".join(f_list)} > {os.path.join(directory, extraction_name)}'
         call(script, shell=True)
+        for elem in f_list:
+            os.remove(elem)
     
     else:
         
@@ -46,9 +48,10 @@ def cleanup(directory, extraction_name):
                     for row in csvreader:
                         if row[0] != 'text':
                             csvwriter.writerow([type, year, month] + row)
+                
+                os.remove(file)
     
-    for elem in f_list:
-        os.remove(elem)
+    
 
 
 def main():

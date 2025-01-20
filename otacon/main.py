@@ -355,6 +355,7 @@ def comment_regex(string) -> str:
     """
     Some modifications for supplied regexes.
     Currently just to allow for quoted blocks to come at the beginning if the supplied regex asks for regex matches at the beginning of comments via ^
+    Also allows file paths.
     """
     
     if os.path.isfile(string):
@@ -372,6 +373,13 @@ def comment_regex(string) -> str:
         
         regex = flag+ '^' + r'(>.+\n\n)*' + expr
         logging.info(f"Regex changed to {regex}")
+    elif regex == '':
+        logging.info("Regex is empty. Either argument value was forgotten or supplied filepath does not exist.")
+        exit()
+    else:
+        logging.info(f"Supplied regex: {regex}")
+        logging.info(f"If this regex is a filepath but you intended to use the contents of that file, check the path and that the file exists.")
+    
 
     return regex
 
