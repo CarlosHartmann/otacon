@@ -483,6 +483,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Skip any filtering.")
     parser.add_argument('--reverse_order', action='store_true', required=False,
                         help="Iterate through the relevant months in reverse order, i.e. from most recent to oldest.")
+    parser.add_argument('--no_cleanup', action='store_true', required=False,
+                        help="Will skip the cleanup (amassing results in a single file) at the end.")
 
     return parser
 
@@ -672,7 +674,7 @@ def main():
                     _=outfile.write(json.dumps(stats_dict))
         logging.info(f"{total_count} total instances")
 
-    if not args.count:
+    if not args.count and not args.no_cleanup:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
     if args.output:
