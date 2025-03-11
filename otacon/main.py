@@ -160,7 +160,7 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
             return False
 
     
-    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
+    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True).encode()) # dicts are unhashable, their original json form is preferrable
     if h in hash_set: # hash check with all previous comments/posts in case the data contain redundancies
         return False
     else:
