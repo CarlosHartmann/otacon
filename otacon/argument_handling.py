@@ -61,6 +61,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Iterate through the relevant months in reverse order, i.e. from most recent to oldest.")
     parser.add_argument('--no_cleanup', action='store_true', required=False,
                         help="Will skip the cleanup (amassing results in a single file) at the end.")
+    parser.add_argument('--no_stats', action="store_true", required=False,
+                        help="Removes per-subreddit statistics. Might improve efficiency.")
 
     return parser
 

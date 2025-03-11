@@ -8,6 +8,7 @@ import os
 import re
 import csv
 import json
+import hashlib
 import logging
 import calendar
 import argparse
@@ -21,7 +22,7 @@ from otacon.prep_output import assemble_outfile_name, write_csv_headers
 from otacon.sampling import get_samplepoints
 
 # keep track of already-processed comments throughout function calls
-hash_list = []
+hash_set = set()
 
 # return stats from which subreddits the relevant comments were and how many per subreddits
 stats_dict = {}
@@ -29,8 +30,8 @@ stats_dict = {}
 
 def find_all_matches(text, regex):
     """Iterate through all regex matches in a text, yielding the span of each as tuple."""
-    r = re.compile(regex)
-    for match in r.finditer(text):
+    
+    for match in regex.finditer(text):
         yield (match.start(), match.end())
 
 
@@ -44,7 +45,7 @@ def inside_quote(text: str, span: tuple) -> bool:
     return True if re.search('&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a quote symbol and the match
 
 
-def extract(args, comment_or_post: dict, regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
+def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
     """
     Extract a comment or post text and all relevant metadata.
     If no regex is supplied, extract the whole comment leaving the span field blank.
@@ -74,12 +75,12 @@ def extract(args, comment_or_post: dict, regex: str, include_quoted: bool, outfi
 
         csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
-        if regex is None:
+        if compiled_comment_regex is None:
             span = None
             row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
         else:
-            for span in find_all_matches(text, regex):
+            for span in find_all_matches(text, compiled_comment_regex):
                 if not include_quoted and not inside_quote(text, span):
                     span = str(span)
                     row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
@@ -159,13 +160,14 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
             return False
 
     
-    h = hash(json.dumps(comment_or_post, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
-    if h in hash_list: # hash check with all previous comments/posts in case the data contain redundancies
+    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True)) # dicts are unhashable, their original json form is preferrable
+    if h in hash_set: # hash check with all previous comments/posts in case the data contain redundancies
         return False
     else:
-        hash_list.append(h)
-        stats_dict.setdefault(comment_or_post['subreddit'], 0)
-        stats_dict[comment_or_post['subreddit']] += 1  
+        hash_set.add(h)
+        if not args.no_stats:
+            stats_dict.setdefault(comment_or_post['subreddit'], 0)
+            stats_dict[comment_or_post['subreddit']] += 1  
         return True
 
 
@@ -186,30 +188,33 @@ def process_month(month, args, outfile, reviewfile):
     relevant_count = 0
     total_count = -1
     infile = args.input + "/" + month
+    compiled_comment_regex = re.compile(args.commentregex)
 
     if args.sample:
         sample_points = get_samplepoints(month, args.sample, args.input)
 
-    for comment_or_post in read_redditfile(infile):
-        total_count += 1
-        if not args.sample or (args.sample and total_count == sample_points[0]):
-
-            if args.sample:
-                del sample_points[0]
-                if len(sample_points) == 0:
-                    break
-            
-            if relevant(comment_or_post, args):
-                relevant_count += 1
-                if not args.count:
-                    with open(outfile, "a", encoding="utf-8") as outf, \
+    with open(outfile, "a", encoding="utf-8") as outf, \
                             open(reviewfile, "a", encoding="utf-8") as reviewf:
+
+        for comment_or_post in read_redditfile(infile):
+            total_count += 1
+            if not args.sample or (args.sample and total_count == sample_points[0]):
+
+                if args.sample:
+                    del sample_points[0]
+                    if len(sample_points) == 0:
+                        break
+                
+                if relevant(comment_or_post, args):
+                    relevant_count += 1
+                    if not args.count:
                         
-                        filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
-                        if not filtered:
-                            extract(args, comment_or_post, args.commentregex, args.include_quoted, outf, filter_reason=None)
-                        else:
-                            extract(args, comment_or_post, args.commentregex, args.include_quoted, reviewf, filter_reason=reason)
+                            
+                            filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
+                            if not filtered:
+                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
+                            else:
+                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
         
     
     if args.count:
@@ -259,7 +264,7 @@ def main():
     if not args.count and not args.no_cleanup:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
-    if args.output:
+    if args.output and not args.no_stats:
         stats_file = os.path.join(args.output, 'otacon_search_stats.txt')
         with open(stats_file, "w") as outfile:
             _=outfile.write(json.dumps(stats_dict))
