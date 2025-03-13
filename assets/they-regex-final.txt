@@ -1,0 +1,1 @@
+(?:(?<=^)|(?<=\s)|(?<=\W)|(?<=/)|(?<=@)|(?<=#)|(?<=-))(?:thei|they|them|their|theirn)(?:'?(?:re|ve|d|ll|s|self|selves|selfs|selve|selvs|selv))*(?=$|(?=\s)|(?=\W)|(?=/)|(?=@)|(?=#)|(?=-))

@@ -188,7 +188,7 @@ def process_month(month, args, outfile, reviewfile):
     relevant_count = 0
     total_count = -1
     infile = args.input + "/" + month
-    compiled_comment_regex = re.compile(args.commentregex)
+    compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
 
     if args.sample:
         sample_points = get_samplepoints(month, args.sample, args.input)
