@@ -133,6 +133,11 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
         else:
             return False
     
+    if args.titleregex is not None:
+        title = comment_or_post['title']
+        search = re.search(args.titleregex, title) if args.case_sensitive else re.search(args.titleregex, title, re.IGNORECASE)
+        return True if search else False
+    
     if args.flairregex is not None:
         if comment_or_post['author_flair_text'] is None:
             return False

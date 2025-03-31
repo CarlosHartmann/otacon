@@ -33,6 +33,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The regex to search the comment flairs with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--postregex', '-PR', type=comment_regex, required=False, 
                         help="The regex to search the post text with. Will only be used if the source is identified to contain the word 'submissions.'")
+    parser.add_argument('--titleregex', '-TR', type=comment_regex, required=False,
+                        help="The regex to search the post titles with.")
     parser.add_argument('--userregex', '-UR', type=comment_regex, required=False,
                         help="The regex to search the user names with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--case-sensitive', '-CS', action='store_true',
