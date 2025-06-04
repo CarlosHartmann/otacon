@@ -198,31 +198,32 @@ def process_month(month, args, outfile, reviewfile):
     if args.sample:
         sample_points = get_samplepoints(month, args.sample, args.input)
 
-    with open(outfile, "a", encoding="utf-8") as outf, \
-                            open(reviewfile, "a", encoding="utf-8") as reviewf:
+    if not args.count:
+        outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
 
-        for comment_or_post in read_redditfile(infile):
-            total_count += 1
-            if not args.sample or (args.sample and total_count == sample_points[0]):
+    for comment_or_post in read_redditfile(infile):
+        total_count += 1
+        if not args.sample or (args.sample and total_count == sample_points[0]):
 
-                if args.sample:
-                    del sample_points[0]
-                    if len(sample_points) == 0:
-                        break
-                
-                if relevant(comment_or_post, args):
-                    relevant_count += 1
-                    if not args.count:
+            if args.sample:
+                del sample_points[0]
+                if len(sample_points) == 0:
+                    break
+            
+            if relevant(comment_or_post, args):
+                relevant_count += 1
+                if not args.count:
+                    
                         
-                            
-                            filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
-                            if not filtered:
-                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
-                            else:
-                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
-        
-    
-    if args.count:
+                        filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
+                        if not filtered:
+                            extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
+                        else:
+                            extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
+    if not args.count:
+        outf.close()
+        reviewf.close()
+    elif args.count:
         return relevant_count
 
 
