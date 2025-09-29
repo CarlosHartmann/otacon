@@ -72,8 +72,8 @@ Example:
 Command contains `--regex "g\w+"`
 For the comment `Never gonna give you up`, the script will return:
 
-`"Never gonna give you up" … (6, 11) …` where the tuple is the span and points to `gonna`
-`"Never gonna give you up" … (12, 16) …` where the span points to `give`
+* `"Never gonna give you up" … (6, 11) …` where the tuple is the span and points to `gonna`
+* `"Never gonna give you up" … (12, 16) …` where the span points to `give`
 
 For further regex specifications, use the ?-markers in the expression itself. For example, if you want to perform a case-insensitive search, add `(?i)` at the beginning of the expression.
 
