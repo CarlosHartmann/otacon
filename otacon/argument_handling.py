@@ -17,13 +17,13 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The directory where search results will be saved to.")
     
     # timeframe
-    parser.add_argument('--time_from', '-F', type=valid_date, required=False,
+    parser.add_argument('--time_from', '--time-from', '-F', type=valid_date, required=False,
                         help="The beginning of the timeframe to be searched, in the format YYYY-MM. If absent, a timeframe is assumed with no lower bound.")
-    parser.add_argument('--time_to', '-T', type=valid_date, required=False,
+    parser.add_argument('--time_to', '--time-to', '-T', type=valid_date, required=False,
                         help="The end of the timeframe to be searched, in the format YYYY-MM. If absent, a timeframe is assumed with no upper bound.")
     
     # search parameters
-    parser.add_argument('--src','--source' '-S', choices=['user', 'subreddit'], required=False,
+    parser.add_argument('--src','--source', '-S', choices=['user', 'subreddit'], required=False,
                         help="The source of the comments, can either be 'user' or 'subreddit'.")
     parser.add_argument('--name', '-N', action='append', required=False,
                         help="The name of the user(s) or subreddit(s) to be searched. If absent, every comment will be searched.")

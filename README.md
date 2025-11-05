@@ -2,7 +2,6 @@
 
 [Pushshift](https://pushshift.io) was the exhaustive corpus of publicly available Reddit comments. Up until Reddit's changes to its API on May 1<sup>st</sup> 2023 this corpus was accessible through a variety of ways. See the project's whitepaper on [ArXiv](arXiv:2001.08435) Ever since, however, the offline data dumps provided by the Pushshift maintainers have become the only viable way to access the data. It depends on the specific project if using the data dumps from months after April 2023 is problematic or not.
 
-
 ## Why Reddit comments?
 
 From a linguistics perspective, Reddit can be a highly valuable resource for sociolinguistic research. Users engage in discussions in different subreddits, which can tell us something about their identity, such as geographical area, age, gender,  class, race, socio-political opinions, amongst other things. Also, some users comment regularly throughout the years, giving us a glimpse of an individual's changing use of language.
@@ -36,15 +35,16 @@ If poetry does not raise an error, the installation worked.
 
 While in the otacon directory, use `poetry run python otacon/main.py` as the basic execution command.
 
-### The following flags are required:
+### Data-related flags
 
-`--input` or `-I` – a path to the folder that contains the Pushshift data. The data are expected to be located in a directory containing only Pushshift dump files all next to each other (i.e. not within their own directories as they were sometimes uploaded).
+`--input` or `-I` – a path to the folder that contains the Pushshift data. The data are expected to be located in a directory containing only Pushshift dump files all next to each other (i.e. not within their own directories as they were sometimes uploaded). This is required.
+The data is furthermore expected to be located either in a directory called `submissions` for posts or `comments` for comments. The script might not behave as intended if the input data are in a differently-named directory.
 
-`--output` or `-O` – a path to the directory where you want the output file to be stored in.
+`--output` or `-O` – a path to the directory where you want the output file to be stored in. This is required unless you use the `count` flag (see below).
 
 ### Optional flags
 
-While none of these are required to run, supplying none of them would essentially mean that you want to copy all of the data uncompressed. Since this is not the intended way to use the script and it would most likely overflow your storage, it is required to use at least one of the following flags:
+While none of these are required to run, supplying none of them would essentially mean that you want to copy all of the data uncompressed. Since this is not the intended way to use the script and it would most likely overflow your storage, it is strongly recommended to use at least one of the following flags:
 
 #### Timeframe
 
@@ -66,7 +66,7 @@ To retrieve comments from a single user or subreddit, use these two flags:
 
 #### Regex
 
-`--commentregex`or `-R` – This flag allows you to only return comments that contain at least one match to your specified expression in their text body. Will return separate results for each match, specifying the index values (=span) of each one.
+`--commentregex`or `-CR` – This flag allows you to only return comments that contain at least one match to your specified expression in their text body. Will return separate results for each match, specifying the index values (=span) of each one.
 
 Example:
 Command contains `--regex "g\w+"`
@@ -77,9 +77,10 @@ For the comment `Never gonna give you up`, the script will return:
 
 For further regex specifications, use the ?-markers in the expression itself. For example, if you want to perform a case-insensitive search, add `(?i)` at the beginning of the expression.
 
-To match posts using regex, use the flag `postregex`.
-To retrieve comments with a flair matching your regex, use the flag `flairregex`.
-To retrieve comments from users whose name matches your regex, use the flag `userregex`.
+To match posts using regex, use the flag `postregex` or `PR`.
+To match the titles of posts using regex, use the flag `titleregex` or `TR`.
+To retrieve comments with a flair matching your regex, use the flag `flairregex` or `FR`.
+To retrieve comments from users whose name matches your regex, use the flag `userregex` or `UR`.
 
 #### Disambiguated search
 
@@ -99,7 +100,7 @@ Currently, only a German model has been added to the poetry project. You must ad
 
 #### Special Search Operations
 
-`--case-sensitive` or `-CS` makes the search, whether by direct matching or by any of the regex flags, case sensitive. If omitted (i.e. the default option), the search is case insensitive.
+`--case-sensitive` or `-CS` makes the search, whether by direct matching or by any of the regex flags, case sensitive. If omitted (i.e. the default option), the search is case insensitive. This applies to all regex flags (see above).
 
 `--count` or `-C` will not retrieve any comments but only count every comment that fit the search parameters and output the results per month.
 
@@ -139,6 +140,7 @@ The script outputs a file for each month while running, which are then concatena
 
 The comments are returned with the following metadata:
 
+* (NOT YET IMPLEMENTED) `id` – the comment or post ID given by Reddit see [here](https://www.reddit.com/r/redditdev/comments/dy6bca/on_reddit_how_can_i_find_a_comments_id/) for clarification. 
 * `text` – The entirety of the comment itself.
 * `span` – When a regex was specified; the indexes of the matched string
 * `subreddit` – The subreddit where the comment was written
