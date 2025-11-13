@@ -58,6 +58,7 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
         _=outfile.write(comment_or_post+'\n')
     
     else:
+        id = comment_or_post['id']
         text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
         user = comment_or_post['author']
         flairtext = comment_or_post['author_flair_text']
@@ -66,24 +67,24 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
         date = comment_or_post['created_utc']
         
         # assemble a standard Reddit URL for older data
-        url_base = "https://www.reddit.com/r/"+subreddit+"/comments/"
+        url_base = "https://www.reddit.com/r/{subreddit}/comments/"
         
-        oldschool_link = url_base + comment_or_post['link_id'].split("_")[1] + "//" + comment_or_post['id'] if 'link_id' in comment_or_post.keys() else None
+        oldschool_link = f"{url_base}{comment_or_post['link_id'].split("_")[1]}//{comment_or_post['id']}" if 'link_id' in comment_or_post.keys() else None
 
         # choose the newer "permalink" metadata instead if available
-        permalink = "https://www.reddit.com" + comment_or_post['permalink'] if 'permalink' in comment_or_post.keys() else oldschool_link
+        permalink = f"https://www.reddit.com{comment_or_post['permalink']}"  if 'permalink' in comment_or_post.keys() else oldschool_link
 
         csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
         if compiled_comment_regex is None:
             span = None
-            row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+            row = [id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
         else:
             for span in find_all_matches(text, compiled_comment_regex):
                 if not include_quoted and not inside_quote(text, span):
                     span = str(span)
-                    row = [text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+                    row = [id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
                     csvwriter.writerow(row)
 
 
@@ -213,8 +214,6 @@ def process_month(month, args, outfile, reviewfile):
             if relevant(comment_or_post, args):
                 relevant_count += 1
                 if not args.count:
-                    
-                        
                         filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
                         if not filtered:
                             extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
