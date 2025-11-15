@@ -69,7 +69,7 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
         # assemble a standard Reddit URL for older data
         url_base = "https://www.reddit.com/r/{subreddit}/comments/"
         
-        oldschool_link = f"{url_base}{comment_or_post['link_id'].split("_")[1]}//{comment_or_post['id']}" if 'link_id' in comment_or_post.keys() else None
+        oldschool_link = f"{url_base}{comment_or_post['link_id'].split('_')[1]}//{comment_or_post['id']}" if 'link_id' in comment_or_post.keys() else None
 
         # choose the newer "permalink" metadata instead if available
         permalink = f"https://www.reddit.com{comment_or_post['permalink']}"  if 'permalink' in comment_or_post.keys() else oldschool_link

@@ -37,7 +37,7 @@ def cleanup(directory, extraction_name):
         
         with open(os.path.join(directory, extraction_name), "w", encoding="utf-8") as outfile:
             csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            csvwriter.writerow(['type', 'year', 'month', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'date', 'permalink', 'filter reason'])
+            csvwriter.writerow(['type', 'year', 'month', 'id', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'date', 'permalink', 'filter reason'])
             for file in f_list:
                 type = "comment" if file.startswith("comment") else "submission"
                 year, month = extract_time_info(file)
