@@ -62,7 +62,7 @@ To retrieve comments from a single user or subreddit, use these two flags:
 
 `--src`  or `-S`– specify if you want comments from a user or subreddit (or several), only two possible values are `user` and `subreddit`.
 
-`--name` or `-N` – specify the name of the user/subreddit you want data from. If the user/subreddit did not exist in the specified timeframe (or has never existed at all), the script will still iterate through all of the data and simply return empty output files. This flag can be set any number of times and the values will be appended. e.g. `--name Tom --name Dick --name Harry`
+`--name` or `-N` – specify the name of the user/subreddit you want data from. If the user/subreddit did not exist in the specified timeframe (or has never existed at all), the script will still iterate through all of the data and simply return empty output files. This flag can be set any number of times and the values will be appended to a list of source subreddits or users, respectively, to be searched. e.g. `--name Tom --name Dick --name Harry`
 
 #### Regex
 
