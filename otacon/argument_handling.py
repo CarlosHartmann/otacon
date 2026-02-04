@@ -55,6 +55,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Include regex matches that are inside Reddit quotes (lines starting with >, often but not exclusively used to quote other Reddit users)")
     parser.add_argument('--sample', '-SMP', type=sample_float, required=False,
                         help="Retrieve a sample of results fitting the other parameters. Sample size is given as float between 0.0 and 1.0 where 1.0 returns 100% of results")
+    parser.add_argument('--reservoir_size', '-RS', type=int, required=False,
+                        help="When performing a reservoir sample, sets the reservoir size to the given integer value. Only use without --sample.")
     parser.add_argument('--return_all', action='store_true', required=False,
                         help="Will return every search hit in its original and complete JSON form.")
     parser.add_argument('--dont_filter', action='store_true', required=False,
@@ -108,6 +110,10 @@ def handle_args() -> argparse.Namespace:
         if not args.case_sensitive:
             args.name = [elem.lower() for elem in args.name]
         args.name = set(args.name)
+    
+    # avoid both sampling and reservoir size being set
+    if args.sample is not None and args.reservoir_size is not None:
+        parser.error("You cannot set both a sample size and a reservoir size.")
     
     if 'submissions' in args.input:
         args.searchmode = 'subs'

@@ -34,6 +34,8 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
         outfile_name += "_toplevel-only_"
     if args.sample:
         outfile_name += "_sample-" + str(args.sample) + "_"
+    if args.reservoir_size:
+        outfile_name += "_reservoirsize-" + str(args.reservoir_size) + "_"
     # add time of search
     outfile_name += "_executed-at_" + datetime.now().strftime('%Y-%m-%d_at_%Hh-%Mm-%Ss')
     # sanitize to avoid illegal filename characters
@@ -49,7 +51,7 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
 def write_csv_headers(outfile_path: str, reviewfile_path: TextIO):
     """Write the headers for both the results file and the file for filtered-out hits."""
     with open(outfile_path, 'a', encoding='utf-8') as outf, open(reviewfile_path, "a", encoding='utf-8') as reviewf:
-        headers = ['id', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'date', 'permalink']
+        headers = ["type", "year", "month", 'id', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'timestamp_utc', 'permalink']
         csvwriter = csv.writer(outf, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
         csvwriter.writerow(headers)
 

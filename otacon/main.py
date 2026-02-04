@@ -8,6 +8,8 @@ import os
 import re
 import csv
 import json
+import random
+import datetime
 import hashlib
 import logging
 import calendar
@@ -26,6 +28,9 @@ hash_set = set()
 
 # return stats from which subreddits the relevant comments were and how many per subreddits
 stats_dict = {}
+
+# for reservoir sampling
+reservoir = []
 
 
 def find_all_matches(text, regex):
@@ -58,6 +63,9 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
         _=outfile.write(comment_or_post+'\n')
     
     else:
+        type = 'comment' if args.searchmode == 'comms' else 'post'
+        year = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc).year
+        month = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc).month
         id = comment_or_post['id']
         text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
         user = comment_or_post['author']
@@ -78,13 +86,13 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
 
         if compiled_comment_regex is None:
             span = None
-            row = [id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+            row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
         else:
             for span in find_all_matches(text, compiled_comment_regex):
                 if not include_quoted and not inside_quote(text, span):
                     span = str(span)
-                    row = [id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+                    row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
                     csvwriter.writerow(row)
 
 
@@ -196,10 +204,13 @@ def process_month(month, args, outfile, reviewfile):
     infile = args.input + "/" + month
     compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
 
+    # for reservoir sampling
+    global reservoir
+
     if args.sample:
         sample_points = get_samplepoints(month, args.sample, args.input)
 
-    if not args.count:
+    if not args.count and not args.reservoir_size:
         outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
 
     for comment_or_post in read_redditfile(infile):
@@ -213,13 +224,24 @@ def process_month(month, args, outfile, reviewfile):
             
             if relevant(comment_or_post, args):
                 relevant_count += 1
-                if not args.count:
+                
+                # Reservoir sampling logic
+                if args.reservoir_size:
+                    if len(reservoir) < args.reservoir_size:
+                        reservoir.append(comment_or_post)
+                    else:
+                        j = random.randint(0, relevant_count - 1)
+                        if j < args.reservoir_size:
+                            reservoir[j] = comment_or_post
+                else:
+                    if not args.count:
                         filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
                         if not filtered:
                             extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
                         else:
                             extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
-    if not args.count:
+
+    if not args.count and not args.reservoir_size:
         outf.close()
         reviewf.close()
     elif args.count:
@@ -245,7 +267,7 @@ def main():
         args.output = os.path.abspath(args.output)
 
     # Writing the CSV headers
-    if not args.count:
+    if not args.count and not args.reservoir_size:
         for month in timeframe:
             outfile = assemble_outfile_name(args, month)
             outfile = os.path.join(args.output, outfile)
@@ -265,8 +287,31 @@ def main():
                 with open(stats_file, "w") as outfile:
                     _=outfile.write(json.dumps(stats_dict))
         logging.info(f"{total_count} total instances")
+    elif args.reservoir_size is not None:
+        for month in timeframe:
+            process_month(month, args, outfile=None, reviewfile=None)
 
-    if not args.count and not args.no_cleanup:
+    # Write the reservoir-sampled comments/posts from the entire timeframe
+    if args.reservoir_size is not None:
+        logging.info(f"Writing reservoir of size {args.reservoir_size} to output.")
+        outfile = assemble_outfile_name(args, month="reservoir_sample")
+        outfile = os.path.join(args.output, outfile)
+        reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
+        reviewfile = os.path.join(args.output, reviewfile)
+        if not args.return_all:
+            write_csv_headers(outfile, reviewfile)
+        outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
+        compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
+        for comment_or_post in reservoir:
+            filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
+            if not filtered:
+                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
+            else:
+                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
+        outf.close()
+        reviewf.close()
+
+    if not args.count and not args.no_cleanup and not args.reservoir_size:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
     if args.output and not args.no_stats:
