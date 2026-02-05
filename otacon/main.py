@@ -93,7 +93,8 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     
     else:
         type = 'comment' if args.searchmode == 'comms' else 'post'
-        year = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc).year
+        time = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc)
+        year, month = time.year, time.month
         month = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc).month
         id = comment_or_post['id']
         text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
@@ -128,12 +129,15 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
 
         else:
             matches = list(find_all_matches(text, compiled_comment_regex))
-            span = matches[index]
-            if not include_quoted and inside_quote(text, span):
-                pass        
-            else:
+            if not include_quoted:
+                matches = [span for span in matches if not inside_quote(text, span)]
+            
+            if index < len(matches):
+                span = matches[index]
                 row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
                 csvwriter.writerow(row)
+            else:
+                logging.warning(f"Index {index} out of range for {len(matches)} matches")
 
 
 def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
@@ -345,15 +349,16 @@ def process_month(month, args, outfile, reviewfile):
             if relevant(comment_or_post, args):
                 weight = assess_number_of_matches(comment_or_post, args.commentregex, args) if args.commentregex and not args.firstmatch else 1
                 monthly_relevant_count += weight
-                relevant_count += weight
                 
                 # Reservoir sampling logic
                 for i in range(weight):
+                    relevant_count += 1
                     entrydict = {'entry': comment_or_post, 'index': i}
                     if args.reservoir_size:
                         if len(reservoir) < args.reservoir_size:
                             reservoir.append(entrydict)
                         else:
+                            # calculate j for reservoir sampling accounting for the current item's position in the stream
                             j = random.randint(0, relevant_count - 1)
                             if j < args.reservoir_size:
                                 reservoir[j] = entrydict
@@ -375,7 +380,7 @@ def open_files(args, month) -> tuple:
     outfile = os.path.join(args.output, outfile)
     reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
     reviewfile = os.path.join(args.output, reviewfile)
-    if not args.return_all:
+    if not args.return_all and not args.reservoir_size:
         write_csv_headers(outfile, reviewfile)
     return outfile, reviewfile
 
