@@ -23,6 +23,9 @@ from otacon.prep_input import establish_timeframe
 from otacon.prep_output import assemble_outfile_name, write_csv_headers
 from otacon.sampling import get_samplepoints
 
+# set seeds for reproducibility
+random.seed(42)
+
 # keep track of already-processed comments throughout function calls
 hash_set = set()
 
