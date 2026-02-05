@@ -31,6 +31,7 @@ stats_dict = {}
 
 # for reservoir sampling
 reservoir = []
+relevant_count = 0
 
 
 def find_all_matches(text, regex):
@@ -75,7 +76,7 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
         date = comment_or_post['created_utc']
         
         # assemble a standard Reddit URL for older data
-        url_base = "https://www.reddit.com/r/{subreddit}/comments/"
+        url_base = f"https://www.reddit.com/r/{subreddit}/comments/"
         
         oldschool_link = f"{url_base}{comment_or_post['link_id'].split('_')[1]}//{comment_or_post['id']}" if 'link_id' in comment_or_post.keys() else None
 
@@ -88,6 +89,15 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
             span = None
             row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
+        elif args.firstmatch:
+            match = compiled_comment_regex.search(text)
+            if match:
+                span = str(match.span())
+                if not include_quoted and inside_quote(text, match.span()):
+                    pass
+                else:
+                    row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+                    csvwriter.writerow(row)
         else:
             for span in find_all_matches(text, compiled_comment_regex):
                 if not include_quoted and not inside_quote(text, span):
@@ -199,13 +209,14 @@ def log_month(month: str):
 
 def process_month(month, args, outfile, reviewfile):
     log_month(month)
-    relevant_count = 0
+    monthly_relevant_count = 0
     total_count = -1
-    infile = args.input + "/" + month
+    infile = os.path.join(args.input, month)
     compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
 
     # for reservoir sampling
     global reservoir
+    global relevant_count
 
     if args.sample:
         sample_points = get_samplepoints(month, args.sample, args.input)
@@ -217,12 +228,14 @@ def process_month(month, args, outfile, reviewfile):
         total_count += 1
         if not args.sample or (args.sample and total_count == sample_points[0]):
 
+            # if sampling, remove the first sample point from the ordered list
             if args.sample:
                 del sample_points[0]
-                if len(sample_points) == 0:
+                if len(sample_points) == 0: # no more sample points left
                     break
             
             if relevant(comment_or_post, args):
+                monthly_relevant_count += 1
                 relevant_count += 1
                 
                 # Reservoir sampling logic
@@ -245,7 +258,7 @@ def process_month(month, args, outfile, reviewfile):
         outf.close()
         reviewf.close()
     elif args.count:
-        return relevant_count
+        return monthly_relevant_count
 
 
 def main():
@@ -255,6 +268,9 @@ def main():
     if args.reverse_order:
         timeframe.reverse()
     logging.info(f"Searching from {timeframe[0]} to {timeframe[-1]}")
+
+    if args.reservoir_size is not None:
+        logging.info(f"Using reservoir sampling with size {args.reservoir_size}.")
 
     if args.spacy_search:
         logging.info("Importing spacy…")
@@ -302,11 +318,14 @@ def main():
             write_csv_headers(outfile, reviewfile)
         outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
         compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
+        print(f"Size of reservoir: {len(reservoir)}")
         for comment_or_post in reservoir:
-            filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
+            filtered, reason = filter(comment_or_post, args.popularity) if args.dont_filter is None else False, None
             if not filtered:
+                print(f"Comment/Post ID {comment_or_post['id']} passed filtering.")
                 extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
             else:
+                print(f"Comment/Post ID {comment_or_post['id']} filtered out: {reason}")
                 extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
         outf.close()
         reviewf.close()
