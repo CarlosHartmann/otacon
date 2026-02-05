@@ -3,6 +3,7 @@ import argparse
 from otacon.data_types import comment_regex, sample_float, valid_date, dir_path, pos_tuple
 from otacon.prep_input import fetch_data_timeframe
 
+import re
 import logging
 logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
 
@@ -116,6 +117,13 @@ def handle_args() -> argparse.Namespace:
     # avoid both sampling and reservoir size being set
     if args.sample is not None and args.reservoir_size is not None:
         parser.error("You cannot set both a sample size and a reservoir size.")
+    
+    # compile regexes if given
+    regex_attrs = ['commentregex', 'flairregex', 'userregex', 'postregex', 'titleregex']
+    for attr in regex_attrs:
+        if getattr(args, attr):
+            flags = re.IGNORECASE if not args.case_sensitive else 0
+            setattr(args, attr, re.compile(getattr(args, attr), flags))
     
     if 'submissions' in args.input:
         args.searchmode = 'subs'

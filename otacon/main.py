@@ -52,18 +52,37 @@ def inside_quote(text: str, span: tuple) -> bool:
 
 
 def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
-    """
-    Extract a comment or post text and all relevant metadata.
-    If no regex is supplied, extract the whole comment leaving the span field blank.
-    If a regex is supplied, extract each match separately with its span info.
-    Discard regex matches found inside of a quoted line.
-    """
+    '''
+    Extract and write comment or post data to a CSV file with optional regex filtering.
+    This function processes Reddit comment or post data and writes it to the specified output file.
+    It handles three modes of operation:
+    1. Return all data: If args.return_all is True, writes the entire JSON object as a single line.
+    2. Single match mode: If args.firstmatch is True, extracts the first (non-quoted) regex match.
+    3. Multiple matches mode: Extracts all matches at the specified index, respecting the include_quoted flag. If sampling is active, only the match at the given index is extracted.
+        
+    Args:
+        args: Arguments object containing:
+            - return_all (bool): If True, return the entire comment/post as JSON.
+            - searchmode (str): Either 'comms' for comments or 'posts' for posts.
+            - firstmatch (bool): If True, extract only the first regex match found.
+        comment_or_post (dict): A dictionary containing:
+            - 'index' (int): The match index to extract in multiple matches mode.
+            - 'entry' (dict): The Reddit comment or post data as a dictionary.
+        compiled_comment_regex (str): Compiled regex pattern for matching text. If None, extracts entire text.
+        include_quoted (bool): If True, includes matches found inside quoted lines. If False, excludes them.
+        outfile (TextIO): Output file object where CSV data will be written.
+        filter_reason (str): Reason for filtering, included in output.
+    Returns:
+        None
+    Writes:
+        Either a JSON line (if args.return_all) or CSV rows with the following fields:
+        type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason
+    Raises:
+        SystemExit: If firstmatch mode is enabled and no non-quoted match is found.
+    '''
     
-    if args.reservoir_size is not None:
-        index = comment_or_post['index']
-        if index > 0:
-            print(f"Processing match {index+1} of comment/post ID {comment_or_post['entry']['id']}. Text:\n{comment_or_post['entry']['body'] if args.searchmode == 'comms' else comment_or_post['entry']['selftext']}\n")
-        comment_or_post = comment_or_post['entry']
+    index = comment_or_post['index']
+    comment_or_post = comment_or_post['entry']
 
     if args.return_all:
         comment_or_post = json.dumps(comment_or_post)
@@ -100,15 +119,11 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
             matches = list(find_all_matches(text, compiled_comment_regex))
             matches = [span for span in matches if not inside_quote(text, span)] if not include_quoted else matches
             span = matches[0] if matches else None
-
-            if span is None:
-                print(f"No non-quoted match found in text:\n{text}")
-                exit()
             
             row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
 
-        elif args.reservoir_size is not None:
+        else:
             matches = list(find_all_matches(text, compiled_comment_regex))
             span = matches[index]
             if not include_quoted and inside_quote(text, span):
@@ -116,13 +131,6 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
             else:
                 row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
                 csvwriter.writerow(row)
-
-        else:
-            for span in find_all_matches(text, compiled_comment_regex):
-                if not include_quoted and not inside_quote(text, span):
-                    span = str(span)
-                    row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
-                    csvwriter.writerow(row)
 
 
 def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
@@ -133,10 +141,7 @@ def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
     if popularity_threshold is not None:
         if comment_or_post['score'] < popularity_threshold:
             return True, "score below defined threshold"
-    if 'body' in list(comment_or_post.keys()):
-        text = comment_or_post['body']
-    else:
-        text = comment_or_post['selftext']
+    text = comment_or_post['body'] if 'body' in comment_or_post else comment_or_post['selftext']
 
     if "i'm a bot" in text.lower():
         return True, "non-human generated"
@@ -144,12 +149,50 @@ def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
     return False, None
 
 
+def filter_then_extract(comment_or_post: dict, compiled_comment_regex, args, include_quoted: bool, outfile: TextIO, reviewfile: TextIO):
+    """First filter a comment or post, then extract it to the appropriate file."""
+    filtered, reason = filter(comment_or_post['entry'], args.popularity) if args.dont_filter is None else False, None # apply filtering unless --dont_filter is set
+    if not filtered:
+        extract(args, comment_or_post, compiled_comment_regex, include_quoted, outfile, filter_reason=None)
+    else:
+        extract(args, comment_or_post, compiled_comment_regex, include_quoted, reviewfile, filter_reason=reason)
+
+
 def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
-    """
-    Test if a Reddit comment or post is at all relevant to the search.
-    This is for broad criteria so negatives are discarded.
-    The filters are ordered by how unlikely they are to pass for efficiency.
-    """
+    '''
+    Test if a Reddit comment or post is relevant to the search criteria.
+    Performs broad filtering to discard irrelevant content based on multiple criteria.
+    Filters are ordered by likelihood of failure for computational efficiency.
+    Args:
+        comment_or_post (dict): A Reddit comment or post object containing metadata
+            such as 'author', 'subreddit', 'body'/'selftext', 'parent_id', 'title',
+            'author_flair_text', etc.
+        args (argparse.Namespace): Parsed command-line arguments containing:
+            - name (str or None): Target subreddit or user to filter by
+            - src (str): Source type ('user' or 'subreddit')
+            - case_sensitive (bool): Whether to perform case-sensitive matching
+            - toplevel (bool): If True, only match top-level posts (parent_id starts with 't3')
+            - searchmode (str): Either 'comms' (comments) or 'posts'
+            - commentregex (re.Pattern or None): Regex pattern for comment body
+            - postregex (re.Pattern or None): Regex pattern for post selftext
+            - include_quoted (bool): Whether to include quoted text in regex search
+            - titleregex (re.Pattern or None): Regex pattern for post title
+            - flairregex (re.Pattern or None): Regex pattern for author flair
+            - userregex (re.Pattern or None): Regex pattern for author username
+            - spacy_search (tuple or None): Tuple of (token, POS_tag) for NLP-based search
+            - nlp (spacy.Language): Spacy language model for NLP processing
+            - no_stats (bool): If False, updates statistics dictionary
+    Returns:
+        bool: True if the comment/post passes all relevance filters and is not a duplicate,
+              False otherwise.
+    Side Effects:
+        - Adds MD5 hash of the comment/post to a module-level hash_set to prevent duplicates
+        - Updates module-level stats_dict with subreddit counts if no_stats is False
+    Note:
+        Requires module-level variables: hash_set (set), stats_dict (dict)
+        Requires helper functions: find_all_matches(), inside_quote()
+    '''
+
     if args.name is not None: # if a subreddit or user was specified as argument, the comment's metadata are checked accordingly
         src = 'author' if args.src == 'user' else 'subreddit' # the username is called 'author' in the data
         
@@ -171,26 +214,19 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
         else:
             return False
     elif regex is not None and not args.include_quoted:
-        matches_with_spans = list(find_all_matches(comment_or_post[body], re.compile(regex) if args.case_sensitive else re.compile(regex, re.IGNORECASE)))
+        matches_with_spans = list(find_all_matches(comment_or_post[body], args.commentregex))
         matches = [span for span in matches_with_spans if not inside_quote(comment_or_post[body], span)]
         if len(matches) == 0:
             return False
     
-    if args.titleregex is not None:
-        title = comment_or_post['title']
-        search = re.search(args.titleregex, title) if args.case_sensitive else re.search(args.titleregex, title, re.IGNORECASE)
-        return True if search else False
-    
-    if args.flairregex is not None:
-        if comment_or_post['author_flair_text'] is None:
-            return False
-        else:
-            search = re.search(args.flairregex, comment_or_post['author_flair_text']) if args.case_sensitive else re.search(args.flairregex, comment_or_post['author_flair_text'], re.IGNORECASE)
-            return True if search else False
-    
-    if args.userregex is not None:
-        search = re.search(args.userregex, comment_or_post['author']) if args.case_sensitive else re.search(args.userregex, comment_or_post['author'], re.IGNORECASE)
-        return True if search else False
+    # Check if title, flair, or user regexes match; return False if they don't match or value is missing
+    for regex, key in zip([args.titleregex, args.flairregex, args.userregex], ['title', 'author_flair_text', 'author']):
+        if regex is not None:
+            # Get the value, using .get() for optional flair field
+            value = comment_or_post[key] if key != 'author_flair_text' else comment_or_post.get('author_flair_text')
+            # Discard if value is missing (useful only for flair) or regex doesn't match
+            if value is None or not re.search(regex, value, re.IGNORECASE if not args.case_sensitive else 0):
+                return False
 
     if args.spacy_search:
         token = args.spacy_search[0]
@@ -207,7 +243,7 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
             return False
 
     
-    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True).encode()) # dicts are unhashable, their original json form is preferrable
+    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True).encode()).hexdigest() # dicts are unhashable, their original json form is preferrable; hexdigest is used to reduce memory consumption
     if h in hash_set: # hash check with all previous comments/posts in case the data contain redundancies
         return False
     else:
@@ -239,12 +275,49 @@ def log_month(month: str):
     logging.info("Processing " + m_name + " " + year)
 
 
+def handle_review_stub(reviewfile: TextIO):
+    """If no entries were filtered out, remove the review file and log this info."""
+    lines_in_review = sum(1 for line in open(reviewfile.name, "r", encoding="utf-8")) - 1
+    if lines_in_review > 0:
+        logging.info(f"{lines_in_review} entries were filtered out into {reviewfile.name}.")
+    else:
+        os.remove(reviewfile.name)
+        logging.info("No entries were filtered out.")
+
+
 def process_month(month, args, outfile, reviewfile):
+    """
+    Process Reddit data for a specific month and extract relevant comments/posts.
+    This function reads Reddit data from a monthly file, filters entries based on
+    relevance criteria, and either writes matches to output files, performs reservoir
+    sampling, or counts matches depending on the provided arguments.
+    Args:
+        month (str): The month identifier used to locate the input file.
+        args (Namespace): Command-line arguments containing:
+            - input (str): Path to input directory containing monthly data files.
+            - sample (int, optional): Sample size for sampling strategy.
+            - count (bool): If True, only count relevant entries without writing output.
+            - reservoir_size (int, optional): Size of reservoir for sampling algorithm.
+            - commentregex (str, optional): Regular expression pattern to match comments.
+            - firstmatch (bool): If True, count only first match per entry.
+            - include_quoted (bool): Whether to include quoted content in extraction.
+        outfile (str): Path to the output file for matched entries.
+        reviewfile (str): Path to the review file for filtered entries.
+    Returns:
+        int or None: If args.count is True, returns the monthly count of relevant matches.
+                     Otherwise, returns None and writes results to files or reservoir.
+    Side Effects:
+        - Modifies global 'reservoir' list with sampled entries if reservoir_size is set.
+        - Modifies global 'relevant_count' counter.
+        - Creates/appends to outfile and reviewfile if not counting and not using reservoir.
+        - Calls handle_review_stub() to finalize review file.
+    Raises:
+        Implicitly may raise exceptions from read_redditfile(), relevant(), and file I/O operations.
+    """
     log_month(month)
     monthly_relevant_count = 0
     total_count = -1
     infile = os.path.join(args.input, month)
-    compiled_comment_regex = re.compile(args.commentregex, re.IGNORECASE if not args.case_sensitive else 0) if args.commentregex else None
 
     # for reservoir sampling
     global reservoir
@@ -267,37 +340,110 @@ def process_month(month, args, outfile, reviewfile):
                     break
             
             if relevant(comment_or_post, args):
-                weight = assess_number_of_matches(comment_or_post, compiled_comment_regex, args) if compiled_comment_regex and not args.firstmatch else 1
+                weight = assess_number_of_matches(comment_or_post, args.commentregex, args) if args.commentregex and not args.firstmatch else 1
                 monthly_relevant_count += weight
                 relevant_count += weight
                 
                 # Reservoir sampling logic
                 for i in range(weight):
+                    entrydict = {'entry': comment_or_post, 'index': i}
                     if args.reservoir_size:
                         if len(reservoir) < args.reservoir_size:
-                            reservoir.append({'entry': comment_or_post, 'index': i})
+                            reservoir.append(entrydict)
                         else:
                             j = random.randint(0, relevant_count - 1)
                             if j < args.reservoir_size:
-                                reservoir[j] = {'entry': comment_or_post, 'index': i}
+                                reservoir[j] = entrydict
                     else:
                         if not args.count:
-                            filtered, reason = filter(comment_or_post, args.popularity) if args.dont_filter is None else False, None # apply filtering unless --dont_filter is set
-                            if not filtered:
-                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
-                            else:
-                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
+                            filter_then_extract(entrydict, args.commentregex, args, args.include_quoted, outf, reviewf)
 
     if not args.count and not args.reservoir_size:
         outf.close()
         reviewf.close()
+        handle_review_stub(reviewf)
     elif args.count:
         return monthly_relevant_count
 
 
-def main():
+def open_files(args, month) -> tuple:
+    """Open the output and review files for writing and write their headers."""
+    outfile = assemble_outfile_name(args, month)
+    outfile = os.path.join(args.output, outfile)
+    reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
+    reviewfile = os.path.join(args.output, reviewfile)
+    if not args.return_all:
+        write_csv_headers(outfile, reviewfile)
+    return outfile, reviewfile
+
+
+def setup_logging_and_args():
+    """Initialize logging and parse command-line arguments."""
     logging.basicConfig(level=logging.NOTSET, format='INFO: %(message)s')
-    args = handle_args()
+    return handle_args()
+
+
+def setup_spacy(args):
+    """Load spacy model if NLP search is enabled."""
+    if args.spacy_search:
+        logging.info("Importing spacy…")
+        import spacy
+        logging.info(f"Importing {args.language} model…")
+        args.nlp = spacy.load(args.language)
+
+
+def process_timeframe(args, timeframe, outfile, reviewfile):
+    """Process all months in the timeframe with normal extraction."""
+    for month in timeframe:
+        process_month(month, args, outfile, reviewfile)
+
+
+def process_count_mode(args, timeframe):
+    """Process timeframe in count mode and output statistics."""
+    total_count = 0
+    for month in timeframe:
+        count = process_month(month, args, outfile=None, reviewfile=None)
+        logging.info(f"{count} instances for {month}")
+        total_count += count
+        if args.output:
+            stats_file = os.path.join(args.output, f'otacon_search_stats_{month}.txt')
+            with open(stats_file, "w") as outfile:
+                _=outfile.write(json.dumps(stats_dict))
+    logging.info(f"{total_count} total instances")
+
+
+def process_reservoir_sampling(args, timeframe, outfile, reviewfile):
+    """Process timeframe using reservoir sampling and write results."""
+    for month in timeframe:
+        process_month(month, args, outfile=None, reviewfile=None)
+    
+    logging.info(f"Writing reservoir of size {args.reservoir_size} to output.")
+    
+    if not args.return_all:
+        write_csv_headers(outfile, reviewfile)
+    
+    outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
+    
+    logging.info(f"Size of reservoir: {len(reservoir)}")
+    
+    for comment_or_post in reservoir:
+        filter_then_extract(comment_or_post, args.commentregex, args, args.include_quoted, outf, reviewf)
+    
+    outf.close()
+    reviewf.close()
+    handle_review_stub(reviewf)
+
+
+def write_final_stats(args):
+    """Write final statistics to file if enabled."""
+    if args.output and not args.no_stats:
+        stats_file = os.path.join(args.output, 'otacon_search_stats.txt')
+        with open(stats_file, "w") as outfile:
+            _=outfile.write(json.dumps(stats_dict))
+
+
+def main():
+    args = setup_logging_and_args()
     timeframe = establish_timeframe(args.time_from, args.time_to, args.input)
     if args.reverse_order:
         timeframe.reverse()
@@ -306,75 +452,24 @@ def main():
     if args.reservoir_size is not None:
         logging.info(f"Using reservoir sampling with size {args.reservoir_size}.")
 
-    if args.spacy_search:
-        logging.info("Importing spacy…")
-        import spacy
-        logging.info(f"Importing {args.language} model…")
-        nlp = spacy.load(args.language)
-        args.nlp = nlp
+    setup_spacy(args)
 
     if not args.count:
         args.output = os.path.abspath(args.output)
+        outfile, reviewfile = open_files(args, timeframe[0])
 
-    # Writing the CSV headers
-    if not args.count and not args.reservoir_size:
-        for month in timeframe:
-            outfile = assemble_outfile_name(args, month)
-            outfile = os.path.join(args.output, outfile)
-            reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
-            reviewfile = os.path.join(args.output, reviewfile)
-            if not args.return_all:
-                write_csv_headers(outfile, reviewfile)
-            process_month(month, args, outfile, reviewfile)
-    elif args.count:
-        total_count = 0
-        for month in timeframe:
-            count = process_month(month, args, outfile=None, reviewfile=None)
-            logging.info(f"{count} instances for {month}")
-            total_count += count
-            if args.output:
-                stats_file = os.path.join(args.output, f'otacon_search_stats_{month}.txt')
-                with open(stats_file, "w") as outfile:
-                    _=outfile.write(json.dumps(stats_dict))
-        logging.info(f"{total_count} total instances")
+    if args.count:
+        process_count_mode(args, timeframe)
     elif args.reservoir_size is not None:
-        for month in timeframe:
-            process_month(month, args, outfile=None, reviewfile=None)
-
-    # Write the reservoir-sampled comments/posts from the entire timeframe
-    if args.reservoir_size is not None:
-        logging.info(f"Writing reservoir of size {args.reservoir_size} to output.")
-        outfile = assemble_outfile_name(args, month="reservoir_sample")
-        outfile = os.path.join(args.output, outfile)
-        reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
-        reviewfile = os.path.join(args.output, reviewfile)
-        if not args.return_all:
-            write_csv_headers(outfile, reviewfile)
-        outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
-        compiled_comment_regex = re.compile(args.commentregex, re.IGNORECASE if not args.case_sensitive else 0) if args.commentregex else None
-        print(f"Size of reservoir: {len(reservoir)}")
-        for comment_or_post in reservoir:
-            filtered, reason = filter(comment_or_post, args.popularity) if args.dont_filter is None else False, None # apply filtering unless --dont_filter is set
-            if not filtered:
-                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
-            else:
-                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
-        outf.close()
-        reviewf.close()
-        lines_in_review = sum(1 for line in open(reviewfile, "r", encoding="utf-8")) - 1
-        if lines_in_review > 0:
-            logging.info(f"{lines_in_review} entries were filtered out into {reviewfile}.")
-        else:
-            os.remove(reviewfile)
-            logging.info("No entries were filtered out.")
+        outfile, reviewfile = open_files(args, timeframe[0])
+        process_reservoir_sampling(args, timeframe, outfile, reviewfile)
+    else:
+        process_timeframe(args, timeframe, outfile, reviewfile)
 
     if not args.count and args.no_cleanup is None and args.reservoir_size is None:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
-    if args.output and not args.no_stats:
-        stats_file = os.path.join(args.output, 'otacon_search_stats.txt')
-        with open(stats_file, "w") as outfile:
-            _=outfile.write(json.dumps(stats_dict))
+    write_final_stats(args)
     
 
 if __name__ == "__main__":

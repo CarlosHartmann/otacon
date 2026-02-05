@@ -23,33 +23,39 @@ def gather_output_files(directory):
 
 
 def cleanup(directory, extraction_name):
+    """Consolidates CSV/JSONL files from directory into a single output file."""
     directory = os.path.abspath(directory)
     f_list = gather_output_files(directory)
     os.chdir(directory)
     
+    output_path = os.path.join(directory, extraction_name)
+    
+    # Handle JSONL files: concatenate directly
     if f_list[0].endswith(".jsonl"):
-        script = f'cat {" ".join(f_list)} > {os.path.join(directory, extraction_name)}'
-        call(script, shell=True)
+        call(f'cat {" ".join(f_list)} > {output_path}', shell=True)
         for elem in f_list:
             os.remove(elem)
+        return
     
-    else:
+    # Handle CSV files: merge with metadata
+    with open(output_path, "w", encoding="utf-8") as outfile:
+        csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        csvwriter.writerow(['type', 'year', 'month', 'id', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'date', 'permalink', 'filter reason'])
         
-        with open(os.path.join(directory, extraction_name), "w", encoding="utf-8") as outfile:
-            csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-            csvwriter.writerow(['type', 'year', 'month', 'id', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'date', 'permalink', 'filter reason'])
-            for file in f_list:
-                type = "comment" if file.startswith("comment") else "submission"
-                year, month = extract_time_info(file)
-                
-                with open(file, "r", encoding="utf-8") as infile:
-                    csvreader = csv.reader(infile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-                    _ = next(csvreader)
-                    for row in csvreader:
-                        if row[0] != 'text':
-                            csvwriter.writerow([type, year, month] + row)
-                
-                os.remove(file)
+        for file in f_list:
+            # Determine type from filename prefix
+            data_type = "comment" if file.startswith("comment") else "submission"
+            year, month = extract_time_info(file)
+            
+            # Read and merge each file, skipping header and empty rows
+            with open(file, "r", encoding="utf-8") as infile:
+                csvreader = csv.reader(infile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
+                next(csvreader)  # Skip header
+                for row in csvreader:
+                    if row[0] != 'text':
+                        csvwriter.writerow([data_type, year, month] + row)
+            
+            os.remove(file)
     
     
 
