@@ -48,8 +48,7 @@ def inside_quote(text: str, span: tuple) -> bool:
     """
     end = span[1]
     relevant_text = text[:end]
-    inside_quote = True if re.search('^&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a line-initial quote symbol and the match
-    return inside_quote
+    return True if re.search('^&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a line-initial quote symbol and the match
 
 
 def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
@@ -62,6 +61,8 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     
     if args.reservoir_size is not None:
         index = comment_or_post['index']
+        if index > 0:
+            print(f"Processing match {index+1} of comment/post ID {comment_or_post['entry']['id']}. Text:\n{comment_or_post['entry']['body'] if args.searchmode == 'comms' else comment_or_post['entry']['selftext']}\n")
         comment_or_post = comment_or_post['entry']
 
     if args.return_all:
@@ -109,9 +110,8 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
 
         elif args.reservoir_size is not None:
             matches = list(find_all_matches(text, compiled_comment_regex))
-            if index < len(matches):
-                span = str(matches[index])
-            if not include_quoted and inside_quote(text, re.search(re.escape(match), text).span()):
+            span = matches[index]
+            if not include_quoted and inside_quote(text, span):
                 pass        
             else:
                 row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
@@ -267,7 +267,7 @@ def process_month(month, args, outfile, reviewfile):
                     break
             
             if relevant(comment_or_post, args):
-                weight = assess_number_of_matches(comment_or_post, compiled_comment_regex, args) if compiled_comment_regex and args.firstmatch is None else 1
+                weight = assess_number_of_matches(comment_or_post, compiled_comment_regex, args) if compiled_comment_regex and not args.firstmatch else 1
                 monthly_relevant_count += weight
                 relevant_count += weight
                 
@@ -361,6 +361,12 @@ def main():
                 extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
         outf.close()
         reviewf.close()
+        lines_in_review = sum(1 for line in open(reviewfile, "r", encoding="utf-8")) - 1
+        if lines_in_review > 0:
+            logging.info(f"{lines_in_review} entries were filtered out into {reviewfile}.")
+        else:
+            os.remove(reviewfile)
+            logging.info("No entries were filtered out.")
 
     if not args.count and args.no_cleanup is None and args.reservoir_size is None:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
