@@ -39,7 +39,7 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The regex to search the user names with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--firstmatch', '-FM', action='store_true',
                         help="Supplied regexes will stop searching after the first match in a comment or post.")
-    parser.add_argument('--case-sensitive', '-CS', action='store_true',
+    parser.add_argument('--case_sensitive', '-CS', action='store_true',
                         help="Makes search case-sensitive if any regex (comment or flair) was supplied.")
     parser.add_argument('--popularity', '-P', type=int, required=False,
                         help="Popularity threshold: Filters out comments with a score lower than the given value.")

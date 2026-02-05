@@ -48,7 +48,8 @@ def inside_quote(text: str, span: tuple) -> bool:
     """
     end = span[1]
     relevant_text = text[:end]
-    return True if re.search('&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a quote symbol and the match
+    inside_quote = True if re.search('^&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a line-initial quote symbol and the match
+    return inside_quote
 
 
 def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
@@ -59,6 +60,10 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     Discard regex matches found inside of a quoted line.
     """
     
+    if args.reservoir_size is not None:
+        index = comment_or_post['index']
+        comment_or_post = comment_or_post['entry']
+
     if args.return_all:
         comment_or_post = json.dumps(comment_or_post)
         _=outfile.write(comment_or_post+'\n')
@@ -90,14 +95,28 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
             row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
         elif args.firstmatch:
-            match = compiled_comment_regex.search(text)
-            if match:
-                span = str(match.span())
-                if not include_quoted and inside_quote(text, match.span()):
-                    pass
-                else:
-                    row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
-                    csvwriter.writerow(row)
+            # find first match that is not quoted if not include_quoted
+            matches = list(find_all_matches(text, compiled_comment_regex))
+            matches = [span for span in matches if not inside_quote(text, span)] if not include_quoted else matches
+            span = matches[0] if matches else None
+
+            if span is None:
+                print(f"No non-quoted match found in text:\n{text}")
+                exit()
+            
+            row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+            csvwriter.writerow(row)
+
+        elif args.reservoir_size is not None:
+            matches = list(find_all_matches(text, compiled_comment_regex))
+            if index < len(matches):
+                span = str(matches[index])
+            if not include_quoted and inside_quote(text, re.search(re.escape(match), text).span()):
+                pass        
+            else:
+                row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+                csvwriter.writerow(row)
+
         else:
             for span in find_all_matches(text, compiled_comment_regex):
                 if not include_quoted and not inside_quote(text, span):
@@ -145,11 +164,16 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     regex = args.commentregex if args.searchmode == 'comms' else args.postregex
     body = 'body' if args.searchmode == 'comms' else 'selftext'
 
-    if regex is not None:
+    if regex is not None and args.include_quoted:
         search = re.search(regex, comment_or_post[body]) if args.case_sensitive else re.search(regex, comment_or_post[body], re.IGNORECASE)
         if search: # checks if comment regex matches at least once, matches are extracted later
             pass
         else:
+            return False
+    elif regex is not None and not args.include_quoted:
+        matches_with_spans = list(find_all_matches(comment_or_post[body], re.compile(regex) if args.case_sensitive else re.compile(regex, re.IGNORECASE)))
+        matches = [span for span in matches_with_spans if not inside_quote(comment_or_post[body], span)]
+        if len(matches) == 0:
             return False
     
     if args.titleregex is not None:
@@ -167,7 +191,6 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     if args.userregex is not None:
         search = re.search(args.userregex, comment_or_post['author']) if args.case_sensitive else re.search(args.userregex, comment_or_post['author'], re.IGNORECASE)
         return True if search else False
-
 
     if args.spacy_search:
         token = args.spacy_search[0]
@@ -195,6 +218,15 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
         return True
 
 
+def assess_number_of_matches(comment_or_post: dict, compiled_comment_regex, args) -> int:
+    """Count the number of matches in a comment or post if a regex is supplied and the firstmatch flag is not set."""
+    text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
+    matches = list(find_all_matches(text, compiled_comment_regex))
+    if not args.include_quoted:
+        matches = [span for span in matches if not inside_quote(text, span)]
+    return len(matches)
+
+
 def log_month(month: str):
     """Send a message to the log with a month's real name for better clarity."""
     month = month.replace("RC_", "")
@@ -212,7 +244,7 @@ def process_month(month, args, outfile, reviewfile):
     monthly_relevant_count = 0
     total_count = -1
     infile = os.path.join(args.input, month)
-    compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
+    compiled_comment_regex = re.compile(args.commentregex, re.IGNORECASE if not args.case_sensitive else 0) if args.commentregex else None
 
     # for reservoir sampling
     global reservoir
@@ -235,24 +267,26 @@ def process_month(month, args, outfile, reviewfile):
                     break
             
             if relevant(comment_or_post, args):
-                monthly_relevant_count += 1
-                relevant_count += 1
+                weight = assess_number_of_matches(comment_or_post, compiled_comment_regex, args) if compiled_comment_regex and args.firstmatch is None else 1
+                monthly_relevant_count += weight
+                relevant_count += weight
                 
                 # Reservoir sampling logic
-                if args.reservoir_size:
-                    if len(reservoir) < args.reservoir_size:
-                        reservoir.append(comment_or_post)
-                    else:
-                        j = random.randint(0, relevant_count - 1)
-                        if j < args.reservoir_size:
-                            reservoir[j] = comment_or_post
-                else:
-                    if not args.count:
-                        filtered, reason = filter(comment_or_post, args.popularity) if not args.dont_filter else False, None
-                        if not filtered:
-                            extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
+                for i in range(weight):
+                    if args.reservoir_size:
+                        if len(reservoir) < args.reservoir_size:
+                            reservoir.append({'entry': comment_or_post, 'index': i})
                         else:
-                            extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
+                            j = random.randint(0, relevant_count - 1)
+                            if j < args.reservoir_size:
+                                reservoir[j] = {'entry': comment_or_post, 'index': i}
+                    else:
+                        if not args.count:
+                            filtered, reason = filter(comment_or_post, args.popularity) if args.dont_filter is None else False, None # apply filtering unless --dont_filter is set
+                            if not filtered:
+                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
+                            else:
+                                extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
 
     if not args.count and not args.reservoir_size:
         outf.close()
@@ -317,20 +351,18 @@ def main():
         if not args.return_all:
             write_csv_headers(outfile, reviewfile)
         outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
-        compiled_comment_regex = re.compile(args.commentregex) if args.commentregex else None
+        compiled_comment_regex = re.compile(args.commentregex, re.IGNORECASE if not args.case_sensitive else 0) if args.commentregex else None
         print(f"Size of reservoir: {len(reservoir)}")
         for comment_or_post in reservoir:
-            filtered, reason = filter(comment_or_post, args.popularity) if args.dont_filter is None else False, None
+            filtered, reason = filter(comment_or_post, args.popularity) if args.dont_filter is None else False, None # apply filtering unless --dont_filter is set
             if not filtered:
-                print(f"Comment/Post ID {comment_or_post['id']} passed filtering.")
                 extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, outf, filter_reason=None)
             else:
-                print(f"Comment/Post ID {comment_or_post['id']} filtered out: {reason}")
                 extract(args, comment_or_post, compiled_comment_regex, args.include_quoted, reviewf, filter_reason=reason)
         outf.close()
         reviewf.close()
 
-    if not args.count and not args.no_cleanup and not args.reservoir_size:
+    if not args.count and args.no_cleanup is None and args.reservoir_size is None:
         cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
 
     if args.output and not args.no_stats:
