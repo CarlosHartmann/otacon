@@ -215,13 +215,13 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     body = 'body' if args.searchmode == 'comms' else 'selftext'
 
     if regex is not None and args.include_quoted:
-        search = re.search(regex, comment_or_post[body]) if args.case_sensitive else re.search(regex, comment_or_post[body], re.IGNORECASE)
+        search = re.search(regex, comment_or_post[body])
         if search: # checks if comment regex matches at least once, matches are extracted later
             pass
         else:
             return False
     elif regex is not None and not args.include_quoted:
-        matches_with_spans = list(find_all_matches(comment_or_post[body], args.commentregex))
+        matches_with_spans = list(find_all_matches(comment_or_post[body], regex))
         matches = [span for span in matches_with_spans if not inside_quote(comment_or_post[body], span)]
         if len(matches) == 0:
             return False
@@ -232,7 +232,7 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
             # Get the value, using .get() for optional flair field
             value = comment_or_post[key] if key != 'author_flair_text' else comment_or_post.get('author_flair_text')
             # Discard if value is missing (useful only for flair) or regex doesn't match
-            if value is None or not re.search(regex, value, re.IGNORECASE if not args.case_sensitive else 0):
+            if value is None or not re.search(regex, value):
                 return False
 
     if args.spacy_search:
