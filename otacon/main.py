@@ -115,16 +115,16 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
         csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
         if compiled_comment_regex is None:
-            span = None
-            row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+            row = [type, year, month, id, text, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
         elif args.firstmatch:
             # find first match that is not quoted if not include_quoted
             matches = list(find_all_matches(text, compiled_comment_regex))
             matches = [span for span in matches if not inside_quote(text, span)] if not include_quoted else matches
             span = matches[0] if matches else None
+            matched = text[span[0]:span[1]] if span else None
             
-            row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+            row = [type, year, month, id, text, span, matched, subreddit, score, user, flairtext, date, permalink, filter_reason]
             csvwriter.writerow(row)
 
         else:
@@ -134,7 +134,8 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
             
             if index < len(matches):
                 span = matches[index]
-                row = [type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason]
+                matched = text[span[0]:span[1]]
+                row = [type, year, month, id, text, span, matched, subreddit, score, user, flairtext, date, permalink, filter_reason]
                 csvwriter.writerow(row)
             else:
                 logging.warning(f"Index {index} out of range for {len(matches)} matches")
@@ -384,7 +385,7 @@ def open_files(args, month) -> tuple:
     reviewfile = outfile[:-4] + "_filtered-out_matches.csv" if not args.return_all else outfile[:-4] + "_filtered-out_matches.jsonl"
     reviewfile = os.path.join(args.output, reviewfile)
     if not args.return_all and not args.reservoir_size:
-        write_csv_headers(outfile, reviewfile)
+        write_csv_headers(outfile, reviewfile, args)
     return outfile, reviewfile
 
 
@@ -431,7 +432,7 @@ def process_reservoir_sampling(args, timeframe, outfile, reviewfile):
     logging.info(f"Writing reservoir of size {args.reservoir_size} to output.")
     
     if not args.return_all:
-        write_csv_headers(outfile, reviewfile)
+        write_csv_headers(outfile, reviewfile, args)
     
     outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
     

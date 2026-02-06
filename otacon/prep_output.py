@@ -48,10 +48,15 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     return outfile_name
 
 
-def write_csv_headers(outfile_path: str, reviewfile_path: TextIO):
+def write_csv_headers(outfile_path: str, reviewfile_path: TextIO, args: argparse.Namespace):
     """Write the headers for both the results file and the file for filtered-out hits."""
     with open(outfile_path, 'a', encoding='utf-8') as outf, open(reviewfile_path, "a", encoding='utf-8') as reviewf:
-        headers = ["type", "year", "month", 'id', 'text', 'span', 'subreddit', 'score', 'user', 'flairtext', 'timestamp_utc', 'permalink']
+        headers = ["type", "year", "month", 'id', 'text', 'span', 'matched', 'subreddit', 'score', 'user', 'flairtext', 'timestamp_utc', 'permalink']
+
+        if not args.commentregex:
+            headers.remove('span')
+            headers.remove('matched')
+
         csvwriter = csv.writer(outf, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
         csvwriter.writerow(headers)
 
