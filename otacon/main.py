@@ -349,7 +349,8 @@ def process_month(month, args, outfile, reviewfile):
             if relevant(comment_or_post, args):
                 weight = assess_number_of_matches(comment_or_post, args.commentregex, args) if args.commentregex and not args.firstmatch else 1
                 if weight == 0:
-                    continue
+                    # Defensive check: relevant() should have caught this, but log if it happens
+                    logging.warning(f"Comment/post {comment_or_post['id']} matched the relevance criteria but had no matches for the comment regex. It will be extracted with empty span.")
                 monthly_relevant_count += weight
                 
                 # Reservoir sampling logic
