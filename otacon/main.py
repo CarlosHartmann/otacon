@@ -154,7 +154,7 @@ def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
         return True, "AutoModerator"
 
     text = comment_or_post['body'] if 'body' in comment_or_post else comment_or_post['selftext']
-    if "i'm a bot" in text.lower():
+    if re.search(r"i( a)?[\'m]*\s*a\s*bot", text.lower()):
         return True, "non-human generated"
     
     return False, None
