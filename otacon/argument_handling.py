@@ -110,6 +110,9 @@ def handle_args() -> argparse.Namespace:
     if args.spacy_search and not args.language:
         parser.error("You did not supply a language for the SpaCy search.")
 
+    if args.spacy_search_exclusive and not args.spacy_search:
+        parser.error("argument --spacy-search-exclusive requires argument --spacy-search also be given.")
+
     # makes checking slightly more efficient
     if args.name is not None:
         if not args.case_sensitive:

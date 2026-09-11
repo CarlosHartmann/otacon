@@ -1,7 +1,9 @@
-docker run otacon \
---input /volume1/reddit_data/comments \
---output /volume1/reddit_data/output/project3/all_theys \
+poetry run python -m otacon.main \
+--input /Volumes/rdisk2/redditdata/comments \
+--output /Volumes/rdisk2/redditdata/output/project3/all_OPs \
 --time_to 2021-10 \
---spacy_search (OP, ADJ) \ # double-check with spacy docs
+--spacy-search "(OP, JJ)" \
+--language "en_core_web_trf" \
+--spacy-search-exclusive \
 --no_stats \
 --return_all
