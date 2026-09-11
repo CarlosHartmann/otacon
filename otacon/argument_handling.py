@@ -48,6 +48,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Only consider top-level comments, ie. comments not posted as a reply to another comment, but directly to a post.")
     parser.add_argument('--spacy-search', '-SS', type=pos_tuple,
                         help="Supply a token with expected POS tag to search how often this token is found with that POS-tag. Requires language specification")
+    parser.add_argument('--spacy-search-exclusive', '-SME', required=False, action='store_true',
+                        help="Turn the spacy search into an excclusive one, returning only the matches that do not(!) fit the specified POS tag.")
     parser.add_argument('--language', '-L', required=False,
                         help="Language to be used for spacy search.")
     

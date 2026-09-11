@@ -242,13 +242,17 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
     if args.spacy_search:
         token = args.spacy_search[0]
         pos = args.spacy_search[1]
-        text = comment_or_post[body]
+        text = comment_or_post['body']
         if token in text:
             doc = args.nlp(text)
             tk_list = [(elem.text.lower(), elem.pos_) for elem in doc]
-            if (token.lower(), pos) in tk_list:
+            if (token.lower(), pos) in tk_list and not args.spacy_search_exclusive:
                 pass
-            else:
+            elif (token.lower(), pos) in tk_list and args.spacy_search_exclusive:
+                return False
+            elif (token.lower(), pos) not in tk_list and args.spacy_search_exclusive:
+                pass
+            elif (token.lower(), pos) not in tk_list and not args.spacy_search_exclusive:
                 return False
         else:
             return False

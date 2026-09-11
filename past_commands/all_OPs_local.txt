@@ -1,0 +1,7 @@
+docker run otacon \
+--input /volume1/reddit_data/comments \
+--output /volume1/reddit_data/output/project3/all_theys \
+--time_to 2021-10 \
+--spacy_search (OP, ADJ) \ # double-check with spacy docs
+--no_stats \
+--return_all

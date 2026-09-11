@@ -14,6 +14,7 @@ scikit-learn = "^1.2.2"
 multiprocessing-logging = "^0.3.4"
 de-dep-news-trf = {url = "https://github.com/explosion/spacy-models/releases/download/de_dep_news_trf-3.7.2/de_dep_news_trf-3.7.2-py3-none-any.whl"}
 pandas = "^2.2.2"
+en-core-web-trf = {url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_trf-3.8.0/en_core_web_trf-3.8.0.tar.gz"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"

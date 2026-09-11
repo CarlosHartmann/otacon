@@ -1,0 +1,9 @@
+sudo docker run \
+  -v /volume1/reddit_data:/volume1/reddit_data \
+  otacon \
+--input /volume1/reddit_data/comments \
+--output /volume1/reddit_data/output/project3/all_theys \
+--time_to 2021-10 \
+--commentregex "(?:(?<=^)|(?<=\s)|(?<=\W))(?:thei|they|them|their|theirn)(?:'?(?:re|ve|d|ll|s|self|selves|selfs|selve|selvs|selv))*(?=$|(?=\s)|(?=\W))" \
+--no_stats \
+--return_all

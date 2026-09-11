@@ -20,5 +20,7 @@ RUN poetry config virtualenvs.create false \
 # Copy the rest of your project code
 COPY . .
 
-# Entrypoint command
-ENTRYPOINT ["poetry", "run", "python", "otacon/main.py"]
+# Entrypoint command (run as a module so /app is on sys.path and
+# "otacon" resolves as a package; poetry run is unnecessary since
+# virtualenvs are disabled)
+ENTRYPOINT ["python", "-m", "otacon.main"]
