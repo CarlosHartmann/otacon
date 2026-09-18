@@ -32,8 +32,23 @@
 #   ./run_resumable_theys.sh
 #   # it automatically clears the pause flag and continues from the next
 #   # not-yet-completed month.
+#
+# OFFLOADING TO NAS:
+# Each month's output is moved (not copied) to the NAS via rclone-custom as soon
+# as that month finishes, freeing the local drive before the next month starts.
+# rclone-custom is a zsh function defined in ~/.zshrc, so that file is sourced
+# below before enabling `set -e`, so a harmless startup hiccup there can't abort
+# this script.
+
+# load the user's zsh config so the rclone-custom function is available
+source ~/.zshrc
 
 set -euo pipefail
+
+if ! typeset -f rclone-custom > /dev/null; then
+    echo "ERROR: rclone-custom function not found after sourcing ~/.zshrc."
+    exit 1
+fi
 
 # ---- configuration (mirrors past_commands/all_theys_local.txt) ----
 REPO_DIR="/Users/uni/Documents/GitHub/otacon"
@@ -41,10 +56,10 @@ INPUT_DIR="/Volumes/rdisk2/redditdata/comments"
 OUTPUT_DIR="/Volumes/rdisk2/redditdata/output/project3/all_theys"
 TIME_TO="2021-10"
 COMMENT_REGEX="(?:(?<=^)|(?<=\s)|(?<=\W))(?:thei|they|them|their|theirn)(?:'?(?:re|ve|d|ll|s|self|selves|selfs|selve|selvs|selv))*(?=\$|(?=\s)|(?=\W))"
+REMOTE_DEST="almazen:reddit_data/output/project3/all_theys"
 
 STATE_FILE="$OUTPUT_DIR/.completed_months"
 PAUSE_FILE="$OUTPUT_DIR/.pause_requested"
-MERGED_NAME="all_theys_merged.jsonl"
 
 mkdir -p "$OUTPUT_DIR"
 touch "$STATE_FILE"
@@ -87,6 +102,10 @@ for month in "${months[@]}"; do
     fi
 
     echo "=== Processing $month ==="
+
+    # snapshot before running so we can identify exactly which files this month produced
+    before_files=("${(@f)$(ls -1 "$OUTPUT_DIR" 2>/dev/null)}")
+
     poetry run python -m otacon.main \
         --input "$INPUT_DIR" \
         --output "$OUTPUT_DIR" \
@@ -98,12 +117,20 @@ for month in "${months[@]}"; do
         --reverse_order \
         --no_cleanup
 
+    after_files=("${(@f)$(ls -1 "$OUTPUT_DIR" 2>/dev/null)}")
+    new_files=("${(@)after_files:|before_files}")
+
+    echo "=== Offloading $month output to NAS ==="
+    for f in "${new_files[@]}"; do
+        # skip bookkeeping files (state/pause flags), only ship actual result files
+        [[ "$f" == .* ]] && continue
+        rclone-custom move "$OUTPUT_DIR/$f" "$REMOTE_DEST"
+    done
+
+    # only mark the month complete once its output has been safely moved off-drive
     echo "$month" >> "$STATE_FILE"
 done
 
-echo "All months processed. Merging per-month output files into $MERGED_NAME ..."
-poetry run python -c "
-from otacon.finalize import cleanup
-cleanup('$OUTPUT_DIR', extraction_name='$MERGED_NAME')
-"
-echo "Done."
+echo "All months processed and offloaded to $REMOTE_DEST."
+echo "Note: each month's output was moved off individually, so no local merge step runs here."
+echo "Merge/concatenate the per-month .jsonl files on the NAS side if a single combined file is needed."
