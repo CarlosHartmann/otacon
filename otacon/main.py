@@ -78,8 +78,9 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     Returns:
         None
     Writes:
-        Either a JSON line (if args.return_all) or CSV rows with the following fields:
-        type, year, month, id, text, span, subreddit, score, user, flairtext, date, permalink, filter_reason
+        A CSV row, or (if args.return_all) a JSON line consisting of the original entry plus
+        the same derived metadata as the CSV row (type, year, month, span, matched, permalink, filter_reason),
+        stored under "_otacon_"-prefixed keys so they never collide with genuine Reddit fields.
     Raises:
         SystemExit: If firstmatch mode is enabled and no non-quoted match is found.
     '''
@@ -87,58 +88,63 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     index = comment_or_post['index']
     comment_or_post = comment_or_post['entry']
 
-    if args.return_all:
-        comment_or_post = json.dumps(comment_or_post)
-        _=outfile.write(comment_or_post+'\n')
-    
-    else:
-        type = 'comment' if args.searchmode == 'comms' else 'post'
-        time = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc)
-        year, month = time.year, time.month
-        month = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc).month
-        id = comment_or_post['id']
-        text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
-        user = comment_or_post['author']
-        flairtext = comment_or_post['author_flair_text']
-        subreddit = comment_or_post['subreddit']
-        score = comment_or_post['score']
-        date = comment_or_post['created_utc']
-        
-        # assemble a standard Reddit URL for older data
-        url_base = f"https://www.reddit.com/r/{subreddit}/comments/"
-        
-        oldschool_link = f"{url_base}{comment_or_post['link_id'].split('_')[1]}//{comment_or_post['id']}" if 'link_id' in comment_or_post.keys() else None
+    type = 'comment' if args.searchmode == 'comms' else 'post'
+    time = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc)
+    year, month = time.year, time.month
+    id = comment_or_post['id']
+    text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
+    user = comment_or_post['author']
+    flairtext = comment_or_post['author_flair_text']
+    subreddit = comment_or_post['subreddit']
+    score = comment_or_post['score']
+    date = comment_or_post['created_utc']
 
-        # choose the newer "permalink" metadata instead if available
-        permalink = f"https://www.reddit.com{comment_or_post['permalink']}"  if 'permalink' in comment_or_post.keys() else oldschool_link
+    # assemble a standard Reddit URL for older data
+    url_base = f"https://www.reddit.com/r/{subreddit}/comments/"
 
-        csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
+    oldschool_link = f"{url_base}{comment_or_post['link_id'].split('_')[1]}//{comment_or_post['id']}" if 'link_id' in comment_or_post.keys() else None
 
-        if compiled_comment_regex is None:
-            row = [type, year, month, id, text, subreddit, score, user, flairtext, date, permalink, filter_reason]
-            csvwriter.writerow(row)
-        elif args.firstmatch:
+    # choose the newer "permalink" metadata instead if available
+    permalink = f"https://www.reddit.com{comment_or_post['permalink']}"  if 'permalink' in comment_or_post.keys() else oldschool_link
+
+    span, matched = None, None
+    if compiled_comment_regex is not None:
+        matches = list(find_all_matches(text, compiled_comment_regex))
+        if not include_quoted:
+            matches = [m for m in matches if not inside_quote(text, m)]
+
+        if args.firstmatch:
             # find first match that is not quoted if not include_quoted
-            matches = list(find_all_matches(text, compiled_comment_regex))
-            matches = [span for span in matches if not inside_quote(text, span)] if not include_quoted else matches
             span = matches[0] if matches else None
-            matched = text[span[0]:span[1]] if span else None
-            
-            row = [type, year, month, id, text, span, matched, subreddit, score, user, flairtext, date, permalink, filter_reason]
-            csvwriter.writerow(row)
-
+        elif index < len(matches):
+            span = matches[index]
         else:
-            matches = list(find_all_matches(text, compiled_comment_regex))
-            if not include_quoted:
-                matches = [span for span in matches if not inside_quote(text, span)]
-            
-            if index < len(matches):
-                span = matches[index]
-                matched = text[span[0]:span[1]]
-                row = [type, year, month, id, text, span, matched, subreddit, score, user, flairtext, date, permalink, filter_reason]
-                csvwriter.writerow(row)
-            else:
-                logging.warning(f"Index {index} out of range for {len(matches)} matches")
+            logging.warning(f"Index {index} out of range for {len(matches)} matches")
+            return
+
+        matched = text[span[0]:span[1]] if span else None
+
+    if args.return_all:
+        # prefixed keys avoid clobbering genuine Reddit fields while preserving per-match metadata
+        enriched_entry = dict(comment_or_post)
+        enriched_entry['_otacon_type'] = type
+        enriched_entry['_otacon_year'] = year
+        enriched_entry['_otacon_month'] = month
+        enriched_entry['_otacon_permalink'] = permalink
+        enriched_entry['_otacon_match_index'] = index
+        enriched_entry['_otacon_span'] = list(span) if span else None
+        enriched_entry['_otacon_matched'] = matched
+        enriched_entry['_otacon_filter_reason'] = filter_reason
+        _=outfile.write(json.dumps(enriched_entry)+'\n')
+        return
+
+    csvwriter = csv.writer(outfile, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+    if compiled_comment_regex is None:
+        row = [type, year, month, id, text, subreddit, score, user, flairtext, date, permalink, filter_reason]
+    else:
+        row = [type, year, month, id, text, span, matched, subreddit, score, user, flairtext, date, permalink, filter_reason]
+    csvwriter.writerow(row)
 
 
 def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
