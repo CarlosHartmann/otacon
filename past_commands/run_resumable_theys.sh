@@ -51,7 +51,7 @@ if ! typeset -f rclone-custom > /dev/null; then
 fi
 
 # ---- configuration (mirrors past_commands/all_theys_local.txt) ----
-REPO_DIR="/Users/uni/Documents/GitHub/otacon"
+REPO_DIR="/Users/$(whoami)/Documents/GitHub/otacon"
 INPUT_DIR="/Volumes/rdisk2/redditdata/comments"
 OUTPUT_DIR="/Volumes/rdisk2/redditdata/output/project3/all_theys"
 TIME_TO="2021-10"
