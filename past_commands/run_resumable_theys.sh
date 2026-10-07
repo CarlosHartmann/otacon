@@ -72,6 +72,20 @@ if [[ ! -d "$INPUT_DIR" ]]; then
     exit 1
 fi
 
+# Reconcile with the NAS: a crash (e.g. power cut) can wipe/rewind the local
+# STATE_FILE, or kill the process between a successful rclone move and the
+# STATE_FILE write for that month. Ask the NAS what's already there instead of
+# trusting local state alone, and backfill STATE_FILE with anything it's missing.
+echo "Checking already-completed months on NAS ($REMOTE_DEST)..."
+remote_listing="$(rclone-custom ls "$REMOTE_DEST" 2>/dev/null || true)"
+remote_completed_months=("${(@f)$(echo "$remote_listing" | grep -oE '(RC|RS)_[0-9]{4}-[0-9]{2}\.zst' | sort -u)}")
+for rm_month in "${remote_completed_months[@]}"; do
+    if ! grep -qxF "$rm_month" "$STATE_FILE"; then
+        echo "Found $rm_month already on NAS, marking as completed."
+        echo "$rm_month" >> "$STATE_FILE"
+    fi
+done
+
 # all month files/dirs present in the input dir, sorted newest-first (mirrors --reverse_order:
 # the huge recent months get processed first, so the 65h budget clears them before pausing)
 months=("${(@f)$(ls "$INPUT_DIR" | grep -E '^(RC|RS)_[0-9]{4}-[0-9]{2}' | sort -r)}")

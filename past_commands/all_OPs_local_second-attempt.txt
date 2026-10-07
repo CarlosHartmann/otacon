@@ -1,0 +1,9 @@
+poetry run python -m otacon.main \
+--input /Volumes/rdisk2/redditdata/comments \
+--output /Volumes/rdisk2/redditdata/output/project3/all_OPs \
+--time_to 2021-10 \
+--commentregex "\bOP\b" \
+--firstmatch \
+--case_sensitive \
+--no_stats \
+--return_all
