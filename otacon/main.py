@@ -14,7 +14,7 @@ import hashlib
 import logging
 import calendar
 import argparse
-from typing import TextIO
+from typing import Optional, TextIO
 
 from otacon.finalize import cleanup, gather_output_files, extract_time_info
 from otacon.argument_handling import define_parser, handle_args
@@ -54,7 +54,7 @@ def inside_quote(text: str, span: tuple) -> bool:
     return True if re.search('^&gt;[^\n]+$', relevant_text) else False # tests if there is no linebreak between a line-initial quote symbol and the match
 
 
-def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_quoted: bool, outfile: TextIO, filter_reason: str):
+def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_quoted: bool, outfile: TextIO, filter_reason: Optional[str]):
     '''
     Extract and write comment or post data to a CSV file with optional regex filtering.
     This function processes Reddit comment or post data and writes it to the specified output file.
@@ -92,9 +92,9 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     time = datetime.datetime.fromtimestamp(int(comment_or_post['created_utc']), tz=datetime.timezone.utc)
     year, month = time.year, time.month
     id = comment_or_post['id']
-    text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post['selftext']
+    text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post.get('selftext', '')
     user = comment_or_post['author']
-    flairtext = comment_or_post['author_flair_text']
+    flairtext = comment_or_post.get('author_flair_text')
     subreddit = comment_or_post['subreddit']
     score = comment_or_post['score']
     date = comment_or_post['created_utc']
@@ -147,7 +147,7 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     csvwriter.writerow(row)
 
 
-def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
+def filter(comment_or_post: dict, popularity_threshold: int) -> tuple[bool, Optional[str]]:
     """
     Test if a Reddit comment or post breaks any of the filtering rules.
     This is for nuanced criteria so positives are kept for manual review.
@@ -168,7 +168,7 @@ def filter(comment_or_post: dict, popularity_threshold: int) -> tuple:
 
 def filter_then_extract(comment_or_post: dict, compiled_comment_regex, args, include_quoted: bool, outfile: TextIO, reviewfile: TextIO):
     """First filter a comment or post, then extract it to the appropriate file."""
-    filtered, reason = filter(comment_or_post['entry'], args.popularity) if args.dont_filter is None else False, None # apply filtering unless --dont_filter is set
+    filtered, reason = (False, None) if args.dont_filter else filter(comment_or_post['entry'], args.popularity)
     if not filtered:
         extract(args, comment_or_post, compiled_comment_regex, include_quoted, outfile, filter_reason=None)
     else:
@@ -421,6 +421,8 @@ def process_timeframe(args, timeframe, outfile, reviewfile):
     """Process all months in the timeframe with normal extraction."""
     for month in timeframe:
         process_month(month, args, outfile, reviewfile)
+        if args.reset_dedup_monthly:
+            hash_set.clear()
 
 
 def process_count_mode(args, timeframe):

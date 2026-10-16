@@ -4,14 +4,23 @@ import argparse
 import os
 import re
 import datetime
+import json
+import shutil
+from io import StringIO
+from pathlib import Path
+from types import SimpleNamespace
+from otacon.argument_handling import handle_args
+from otacon.main import extract
+import otacon.main as main_module
+import otacon.history_runner as history_runner
 
-from otacon.main import valid_date
-from otacon.main import dir_path
-from otacon.main import within_timeframe
+from otacon.data_types import valid_date
+from otacon.data_types import dir_path
+from otacon.prep_input import within_timeframe
 from otacon.main import filter
-from otacon.main import fetch_data_timeframe
+from otacon.prep_input import fetch_data_timeframe
 from otacon.main import inside_quote
-from otacon.main import comment_regex
+from otacon.data_types import comment_regex
 
 def test_valid_date():
     assert valid_date('2010-01') == (2010, 1)
@@ -76,3 +85,169 @@ def test_comment_regex():
     string = '(?i)^naja'
 
     assert comment_regex(string) == '^(?i)(^>.+\n\n)*naja'
+
+
+def test_name_file(monkeypatch, tmp_path):
+    names_file = tmp_path / 'names.txt'
+    names_file.write_text('Alice\nBob\n', encoding='utf-8')
+    monkeypatch.setattr('sys.argv', [
+        'otacon', '--input', str(tmp_path), '--output', str(tmp_path),
+        '--time_from', '2010-01', '--time_to', '2010-01', '--src', 'user',
+        '--name-file', str(names_file),
+    ])
+
+    args = handle_args()
+
+    assert args.name == {'alice', 'bob'}
+
+
+def test_extract_submission_preserves_post_metadata():
+    entry = {
+        'id': 'abc123',
+        'author': 'example_user',
+        'created_utc': 1609459200,
+        'selftext': 'A full submission body',
+        'subreddit': 'example',
+        'score': 4,
+        'permalink': '/r/example/comments/abc123/title/',
+    }
+    output = StringIO()
+    args = SimpleNamespace(searchmode='subs', return_all=True, firstmatch=False)
+
+    extract(args, {'index': 0, 'entry': entry}, None, False, output, None)
+
+    result = json.loads(output.getvalue())
+    assert result['selftext'] == entry['selftext']
+    assert result['_otacon_type'] == 'post'
+    assert result['_otacon_permalink'] == 'https://www.reddit.com/r/example/comments/abc123/title/'
+
+
+def test_process_timeframe_can_reset_deduplication_monthly(monkeypatch):
+    previous_hashes = main_module.hash_set.copy()
+    seen_hash_counts = []
+
+    def record_month(month, args, outfile, reviewfile):
+        seen_hash_counts.append(len(main_module.hash_set))
+        main_module.hash_set.add(month)
+
+    try:
+        main_module.hash_set.clear()
+        monkeypatch.setattr(main_module, 'process_month', record_month)
+        args = SimpleNamespace(reset_dedup_monthly=True)
+        main_module.process_timeframe(args, ['2010-01', '2010-02'], None, None)
+        assert seen_hash_counts == [0, 0]
+    finally:
+        main_module.hash_set.clear()
+        main_module.hash_set.update(previous_hashes)
+
+
+def test_filter_then_extract_skips_filters_when_requested(monkeypatch):
+    extracted = []
+    output = StringIO()
+    review = StringIO()
+
+    def unexpected_filter(entry, popularity):
+        raise AssertionError('filter should not run when dont_filter is set')
+
+    def record_extract(args, entry, regex, include_quoted, outfile, filter_reason):
+        extracted.append((outfile, filter_reason))
+
+    monkeypatch.setattr(main_module, 'filter', unexpected_filter)
+    monkeypatch.setattr(main_module, 'extract', record_extract)
+    args = SimpleNamespace(dont_filter=True, popularity=None)
+
+    main_module.filter_then_extract({'entry': {}}, None, args, False, output, review)
+
+    assert extracted == [(output, None)]
+
+
+def test_filter_then_extract_applies_filters_by_default(monkeypatch):
+    extracted = []
+    output = StringIO()
+    review = StringIO()
+
+    monkeypatch.setattr(main_module, 'filter', lambda entry, popularity: (True, 'AutoModerator'))
+    monkeypatch.setattr(
+        main_module,
+        'extract',
+        lambda args, entry, regex, include_quoted, outfile, filter_reason: extracted.append(
+            (outfile, filter_reason)
+        ),
+    )
+    args = SimpleNamespace(dont_filter=False, popularity=None)
+
+    main_module.filter_then_extract({'entry': {}}, None, args, False, output, review)
+
+    assert extracted == [(review, 'AutoModerator')]
+
+
+def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypatch, tmp_path):
+    comments = tmp_path / 'comments'
+    submissions = tmp_path / 'submissions'
+    output_root = tmp_path / 'output'
+    remote_root = tmp_path / 'remote'
+    comments.mkdir()
+    submissions.mkdir()
+    output_root.mkdir()
+    remote_root.mkdir()
+
+    comment = {
+        'author': 'AutoModerator', 'created_utc': 1670000000, 'id': 'comment1',
+        'body': 'A comment', 'subreddit': 'example', 'score': 1,
+        'author_flair_text': None, 'link_id': 't3_post1', 'parent_id': 't3_post1',
+    }
+    submission = {
+        'author': 'alice', 'created_utc': 1670000000, 'id': 'post1',
+        'selftext': 'A submission', 'subreddit': 'example', 'score': 2,
+        'author_flair_text': None, 'permalink': '/r/example/comments/post1/title/',
+    }
+    (comments / 'RC_2022-12').write_text(json.dumps(comment) + '\n', encoding='utf-8')
+    (comments / 'RC_2023-01').write_text(json.dumps(comment) + '\n', encoding='utf-8')
+    (submissions / 'RS_2022-12').write_text(json.dumps(submission) + '\n', encoding='utf-8')
+    (submissions / 'RS_2023-01').write_text(json.dumps(submission) + '\n', encoding='utf-8')
+    user_file = tmp_path / 'users.txt'
+    user_file.write_text('AutoModerator\nalice\n', encoding='utf-8')
+
+    moves = []
+
+    def fake_rclone(arguments, capture_output=False):
+        listing = '\n'.join(path.name for path in remote_root.iterdir())
+        return SimpleNamespace(returncode=0, stdout=listing)
+
+    def fake_move_pairs(pairs):
+        moves.extend(str(destination) for _, destination in pairs)
+        for source, destination in pairs:
+            source_path = Path(str(source).rstrip('/'))
+            destination_path = Path(destination)
+            destination_path.mkdir(parents=True, exist_ok=True)
+            if source_path.is_dir():
+                for child in list(source_path.iterdir()):
+                    shutil.move(str(child), str(destination_path / child.name))
+            else:
+                shutil.move(str(source_path), str(destination_path / source_path.name))
+
+    monkeypatch.setattr(history_runner, '_run_rclone', fake_rclone)
+    monkeypatch.setattr(history_runner, '_move_pairs', fake_move_pairs)
+    config = SimpleNamespace(
+        comments_input=comments,
+        submissions_input=submissions,
+        user_file=user_file,
+        output_root=output_root,
+        remote_root=str(remote_root),
+        state_file=output_root / '.completed',
+        pause_file=output_root / '.pause_requested',
+        time_to='2022-12',
+    )
+
+    history_runner._run(config)
+
+    comment_output = next((remote_root / 'comments').glob('*.jsonl'))
+    submission_output = next((remote_root / 'submissions').glob('*.jsonl'))
+    comment_result = json.loads(comment_output.read_text(encoding='utf-8'))
+    submission_result = json.loads(submission_output.read_text(encoding='utf-8'))
+    assert comment_result['author'] == 'AutoModerator'
+    assert comment_result['_otacon_type'] == 'comment'
+    assert submission_result['selftext'] == 'A submission'
+    assert submission_result['_otacon_type'] == 'post'
+    assert moves == [str(remote_root / 'submissions'), str(remote_root / 'comments'), str(remote_root)]
+    assert config.state_file.read_text(encoding='utf-8').splitlines() == ['2022-12']

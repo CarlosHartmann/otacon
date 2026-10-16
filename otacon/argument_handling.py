@@ -28,6 +28,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="The source of the comments, can either be 'user' or 'subreddit'.")
     parser.add_argument('--name', '-N', action='append', required=False,
                         help="The name of the user(s) or subreddit(s) to be searched. If absent, every comment will be searched.")
+    parser.add_argument('--name-file', required=False,
+                        help="A newline-delimited file containing user or subreddit names to search.")
     parser.add_argument('--commentregex', '-CR', type=comment_regex, required=False,
                         help="The regex to search the comments with. If absent, all comments matching the other parameters will be extracted. Can be a filepath of a file that contains the regex.")
     parser.add_argument('--flairregex', '-FR', type=comment_regex, required=False,
@@ -70,6 +72,8 @@ def define_parser() -> argparse.ArgumentParser:
                         help="Iterate through the relevant months in reverse order, i.e. from most recent to oldest.")
     parser.add_argument('--no_cleanup', action='store_true', required=False,
                         help="Will skip the cleanup (amassing results in a single file) at the end.")
+    parser.add_argument('--reset-dedup-monthly', action='store_true', required=False,
+                        help="Clear duplicate tracking after each month to bound memory use.")
     parser.add_argument('--no_stats', action="store_true", required=False,
                         help="Removes per-subreddit statistics. Might improve efficiency.")
 
@@ -91,10 +95,11 @@ def handle_args() -> argparse.Namespace:
         parser.error("Not enough parameters supplied. Search would return too many comments.")
 
     # the 'src' argument is required if 'name' is given, however both are optional
-    if args.name is not None and args.src is None:
+    has_names = args.name is not None or args.name_file is not None
+    if has_names and args.src is None:
         parser.error("argument --name requires argument --src also be given.")
-    # the 'name' argument is required if 'src' is given, however both are optional
-    elif args.src is not None and args.name is None:
+    # a name or name file is required if 'src' is given, however both are optional
+    elif args.src is not None and not has_names:
         parser.error("argument --src requires argument --name also be given.")
 
     # ensure that the timeframe makes sense (either the from-year is later than to-year, or the from-month is later than to-month in the same year)
@@ -114,7 +119,15 @@ def handle_args() -> argparse.Namespace:
         parser.error("argument --spacy-search-exclusive requires argument --spacy-search also be given.")
 
     # makes checking slightly more efficient
-    if args.name is not None:
+    if args.name_file is not None:
+        names = {name.lower() if not args.case_sensitive else name for name in (args.name or [])}
+        with open(args.name_file, encoding='utf-8') as names_file:
+            for line in names_file:
+                name = line.strip()
+                if name:
+                    names.add(name if args.case_sensitive else name.lower())
+        args.name = names
+    elif args.name is not None:
         if not args.case_sensitive:
             args.name = [elem.lower() for elem in args.name]
         args.name = set(args.name)
