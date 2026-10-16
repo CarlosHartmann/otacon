@@ -24,6 +24,7 @@ def define_runner_parser() -> argparse.ArgumentParser:
     parser.add_argument("--remote-root", required=True)
     parser.add_argument("--state-file", type=Path, required=True)
     parser.add_argument("--pause-file", type=Path, required=True)
+    parser.add_argument("--user-list-id", required=True)
     parser.add_argument("--time-to", default="2022-12")
     return parser
 
@@ -128,7 +129,8 @@ def _run(config: argparse.Namespace) -> None:
     remote_listing = _run_rclone(["ls", config.remote_root], capture_output=True)
     if remote_listing.returncode == 0:
         marker_pattern = re.compile(
-            rf"_otacon_history_(\d{{4}}-\d{{2}})_through_{re.escape(config.time_to)}_complete"
+            rf"_otacon_history_(\d{{4}}-\d{{2}})_through_{re.escape(config.time_to)}"
+            rf"_users_{re.escape(config.user_list_id)}_complete"
         )
         remote_completed = set(marker_pattern.findall(remote_listing.stdout))
         for month in sorted(remote_completed & set(months) - completed):
@@ -177,7 +179,10 @@ def _run(config: argparse.Namespace) -> None:
                     otacon_main.process_month(input_file, args, outfile, reviewfile)
 
             otacon_main.hash_set.clear()
-            marker = work_dir / f"_otacon_history_{month}_through_{config.time_to}_complete"
+            marker = work_dir / (
+                f"_otacon_history_{month}_through_{config.time_to}"
+                f"_users_{config.user_list_id}_complete"
+            )
             marker.touch()
             move_pairs = [(f"{output_dir}/", remote_dir) for output_dir, remote_dir in stream_outputs]
             move_pairs.append((marker, config.remote_root))

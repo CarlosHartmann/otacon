@@ -236,6 +236,7 @@ def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypa
         remote_root=str(remote_root),
         state_file=output_root / '.completed',
         pause_file=output_root / '.pause_requested',
+        user_list_id='test-list',
         time_to='2022-12',
     )
 

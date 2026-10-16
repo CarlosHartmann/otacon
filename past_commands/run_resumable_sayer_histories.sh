@@ -18,10 +18,11 @@ DATA_ROOT="/Volumes/rdisk2/redditdata"
 COMMENTS_INPUT="$DATA_ROOT/comments"
 SUBMISSIONS_INPUT="$DATA_ROOT/submissions"
 USER_FILE="/Users/uni/Documents/GitHub/shadow_moses/0-assets/raw_data/main/7-unique-usernames-and-subreddits/unique_usernames.txt"
+USER_LIST_ID="$(shasum -a 256 "$USER_FILE" | cut -c1-12)"
 OUTPUT_ROOT="$DATA_ROOT/output/project3/OP_sayer_histories"
 REMOTE_ROOT="almazen:reddit_data/output/project3/OP_sayer_histories"
 
-STATE_FILE="$OUTPUT_ROOT/.completed_months_through_2022-12"
+STATE_FILE="$OUTPUT_ROOT/.completed_months_through_2022-12_users-$USER_LIST_ID"
 PAUSE_FILE="$OUTPUT_ROOT/.pause_requested"
 
 mkdir -p "$OUTPUT_ROOT"
@@ -48,4 +49,5 @@ exec poetry run python -m otacon.history_runner \
     --remote-root "$REMOTE_ROOT" \
     --state-file "$STATE_FILE" \
     --pause-file "$PAUSE_FILE" \
+    --user-list-id "$USER_LIST_ID" \
     --time-to 2022-12
