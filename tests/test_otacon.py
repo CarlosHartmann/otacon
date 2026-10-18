@@ -252,3 +252,48 @@ def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypa
     assert submission_result['_otacon_type'] == 'post'
     assert moves == [str(remote_root / 'submissions'), str(remote_root / 'comments'), str(remote_root)]
     assert config.state_file.read_text(encoding='utf-8').splitlines() == ['2022-12']
+
+
+def test_thread_index_chunked_merge_is_sorted_filtered_and_resumable(tmp_path):
+    import random
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from otacon import thread_index
+
+    rng = random.Random(0)
+    (tmp_path / 'parts').mkdir()
+    rows, next_id = [], 1000
+    for month in ('2010-01', '2010-02', '2010-03'):
+        cols = {f.name: [] for f in thread_index.SCHEMA}
+        for _ in range(500):
+            on_sub = not rows or rng.random() < 0.3
+            parent = rng.randrange(1, 300) if on_sub else rng.choice(rows)[0]
+            row = (next_id, parent, on_sub, 1, next_id, rng.choice(['AskReddit', 'pics', 'dropped']))
+            rows.append(row)
+            for f, v in zip(thread_index.SCHEMA, row):
+                cols[f.name].append(v)
+            next_id += rng.randrange(1, 5)
+        pq.write_table(pa.table(cols, schema=thread_index.SCHEMA), tmp_path / 'parts' / f'{month}.parquet')
+    subs = tmp_path / 'subs.txt'
+    subs.write_text('askreddit\npics\n')
+    kept = [r for r in rows if r[5] != 'dropped']
+
+    thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=4)
+    first_chunk = tmp_path / 'by_parent' / 'part-0-000.parquet'
+    first_chunk.unlink()  # simulate an interruption after the other chunks finished
+    thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=4)
+
+    def read(name):
+        files = sorted((tmp_path / name).glob('*.parquet'))
+        return [tuple(r) for f in files for r in duckdb.sql(f"SELECT * FROM '{f}'").fetchall()]
+
+    assert len(list((tmp_path / 'by_parent').glob('*.parquet'))) == 8
+    assert read('by_id') == sorted(kept, key=lambda r: r[0])
+    by_parent = read('by_parent')
+    assert [(r[2], r[1]) for r in by_parent] == sorted((r[2], r[1]) for r in kept)
+    assert sorted(by_parent) == sorted(kept)
+
+    target = next(r for r in kept if not r[2])
+    comments, _ = thread_index.ThreadIndex(tmp_path).thread([thread_index.to_base36(target[0])])
+    assert thread_index.to_base36(target[1]) in comments or target[1] not in {r[0] for r in kept}

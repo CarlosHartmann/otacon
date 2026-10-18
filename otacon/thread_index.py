@@ -2,13 +2,15 @@
 
 Usage:
     python -m otacon.thread_index build  --input DIR --index DIR [--subreddits FILE] [--time_from 2010-01] [--time_to 2021-09] [--workers 4]
-    python -m otacon.thread_index merge  --index DIR
+    python -m otacon.thread_index merge  --index DIR [--subreddits FILE] [--temp-dir DIR] [--max-temp-size 800GiB] [--chunks 20]
     python -m otacon.thread_index lookup --index DIR ID [ID ...]
 '''
 
 import argparse
+import json
 import os
 import re
+import shutil
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -102,24 +104,117 @@ def build(input_dir, index_dir, time_from, time_to, workers, subreddit_file=None
             print(f'{Path(dst).name}: {rows:,} rows' if rows else f'{Path(dst).name}: skipped/done', flush=True)
 
 
-def merge(index_dir):
+def merge_bounds(con, parts):
+    """Key ranges to split the sorts on: one group for by_id, one per parent_is_submission value for by_parent."""
+    lo, hi = con.execute(f"SELECT min(id), max(id) FROM {parts}").fetchone()
+    groups = {'by_id': [(None, lo, hi)], 'by_parent': []}
+    for is_sub, plo, phi in con.execute(
+        f"SELECT parent_is_submission, min(parent_id), max(parent_id) FROM {parts} GROUP BY 1 ORDER BY 1"
+    ).fetchall():
+        groups['by_parent'].append((is_sub, plo, phi))
+    return groups
+
+
+COPY_OPTS = '(FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 122880)'
+COLUMNS = ', '.join(SCHEMA.names)
+
+
+def chunk_range(lo, hi, chunks, i):
+    width = hi - lo + 1
+    return lo + width * i // chunks, lo + width * (i + 1) // chunks
+
+
+def write_chunk(con, select, dst, name):
+    part_tmp = dst.with_suffix('.parquet.tmp')
+    con.execute(f"COPY ({select}) TO '{part_tmp}' {COPY_OPTS}")
+    os.replace(part_tmp, dst)
+    print(f'wrote {name}/{dst.name}', flush=True)
+
+
+def merge(index_dir, subreddit_file=None, max_temp_size='800GiB', temp_dir=None, chunks=20):
+    """Write by_id/ and by_parent/ as sorted Parquet chunks split by key range, so each sort spills only ~1/chunks
+    of the data. Finished chunks are skipped, so an interrupted merge resumes where it stopped.
+
+    by_id chunks are read straight from the parts: ids rise with time, so Parquet stats skip all but a month or two.
+    parent_id stats span nearly everything (submission and comment parents are mixed), so by_parent first splits
+    the rows into per-chunk buckets under the temp dir in one unsorted pass, then sorts each bucket."""
     idx = Path(index_dir)
-    con = duckdb.connect()
-    con.execute(f"SET temp_directory='{idx / 'tmp'}'")
-    for name, order in (('by_id', 'id'), ('by_parent', 'parent_is_submission, parent_id')):
-        con.execute(
-            f"COPY (SELECT * FROM read_parquet('{idx}/parts/*.parquet') ORDER BY {order}) "
-            f"TO '{idx}/{name}.parquet' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 122880)"
-        )
-        print(f'wrote {name}.parquet', flush=True)
+    con = duckdb.connect(config={'max_temp_directory_size': max_temp_size})
+    tmp = Path(temp_dir) if temp_dir else idx / 'tmp'
+    tmp.mkdir(parents=True, exist_ok=True)
+    con.execute(f"SET temp_directory='{tmp}'")
+    print(f'temp_directory: {tmp}', flush=True)
+    print(f'max_temp_directory_size: {max_temp_size}', flush=True)
+    parts = f"read_parquet('{idx}/parts/*.parquet')"
+    filter_clause = ''
+    if subreddit_file:
+        wanted = pa.table({'subreddit': sorted(load_subreddits(subreddit_file))})
+        con.register('wanted_subreddits', wanted)
+        filter_clause = 'AND lower(subreddit) IN (SELECT subreddit FROM wanted_subreddits)'
+
+    bounds_file = idx / 'merge_bounds.json'
+    if bounds_file.exists():
+        groups = json.loads(bounds_file.read_text())
+    else:
+        print('scanning key ranges', flush=True)
+        groups = merge_bounds(con, parts)
+        bounds_file.write_text(json.dumps(groups))
+
+    by_id = idx / 'by_id'
+    by_id.mkdir(exist_ok=True)
+    (_, lo, hi), = groups['by_id']
+    for i in range(chunks):
+        dst = by_id / f'part-{i:03d}.parquet'
+        if not dst.exists():
+            a, b = chunk_range(lo, hi, chunks, i)
+            write_chunk(con, f'SELECT * FROM {parts} WHERE id >= {a} AND id < {b} {filter_clause} ORDER BY id',
+                        dst, 'by_id')
+    print('finished by_id', flush=True)
+
+    by_parent = idx / 'by_parent'
+    by_parent.mkdir(exist_ok=True)
+    targets = [(int(is_sub), i, by_parent / f'part-{int(is_sub)}-{i:03d}.parquet')
+               for is_sub, _, _ in groups['by_parent'] for i in range(chunks)]
+    if any(not dst.exists() for *_, dst in targets):
+        buckets = tmp / 'by_parent_buckets'
+        if not buckets.exists():
+            print('splitting by_parent into buckets', flush=True)
+            bucket_expr = 'CASE ' + ' '.join(
+                f'WHEN parent_is_submission = {str(is_sub).lower()} THEN (parent_id - {plo}) * {chunks} // {phi - plo + 1}'
+                for is_sub, plo, phi in groups['by_parent']) + ' END'
+            buckets_tmp = tmp / 'by_parent_buckets.tmp'
+            if buckets_tmp.exists():
+                shutil.rmtree(buckets_tmp)
+            con.execute(
+                f"COPY (SELECT {COLUMNS}, parent_is_submission::INT AS grp, {bucket_expr} AS bucket FROM {parts} "
+                f"WHERE true {filter_clause}) TO '{buckets_tmp}' "
+                f"(FORMAT PARQUET, COMPRESSION ZSTD, PARTITION_BY (grp, bucket))"
+            )
+            os.replace(buckets_tmp, buckets)
+        for grp, i, dst in targets:
+            if dst.exists():
+                continue
+            src = buckets / f'grp={grp}' / f'bucket={i}'
+            if src.exists():
+                write_chunk(con, f"SELECT {COLUMNS} FROM read_parquet('{src}/*.parquet', hive_partitioning = false) "
+                                 f"ORDER BY parent_id", dst, 'by_parent')
+            else:  # empty key range
+                write_chunk(con, f'SELECT * FROM {parts} WHERE false', dst, 'by_parent')
+        shutil.rmtree(buckets)
+    print('finished by_parent', flush=True)
 
 
 class ThreadIndex:
     def __init__(self, index_dir):
         idx = Path(index_dir)
         self.con = duckdb.connect()
-        self.by_id = f"read_parquet('{idx}/by_id.parquet')"
-        self.by_parent = f"read_parquet('{idx}/by_parent.parquet')"
+        self.by_id = self._source(idx, 'by_id')
+        self.by_parent = self._source(idx, 'by_parent')
+
+    @staticmethod
+    def _source(idx, name):
+        path = idx / name / '*.parquet' if (idx / name).is_dir() else idx / f'{name}.parquet'
+        return f"read_parquet('{path}')"
 
     def _fetch(self, source, where_col, ids, extra=''):
         ph = ','.join('?' * len(ids))
@@ -170,6 +265,10 @@ def main():
     b.add_argument('--workers', type=int, default=4)
     m = sub.add_parser('merge')
     m.add_argument('--index', required=True)
+    m.add_argument('--subreddits', help='text file with one subreddit name per line')
+    m.add_argument('--max-temp-size', default='800GiB')
+    m.add_argument('--temp-dir', help='DuckDB spill directory (default: <index>/tmp)')
+    m.add_argument('--chunks', type=int, default=20, help='key-range chunks per sort (more = less spill per chunk)')
     l = sub.add_parser('lookup')
     l.add_argument('--index', required=True)
     l.add_argument('ids', nargs='+')
@@ -178,7 +277,7 @@ def main():
     if a.cmd == 'build':
         build(a.input, a.index, a.time_from, a.time_to, a.workers, a.subreddits)
     elif a.cmd == 'merge':
-        merge(a.index)
+        merge(a.index, a.subreddits, a.max_temp_size, a.temp_dir, a.chunks)
     else:
         comments, submissions = ThreadIndex(a.index).thread(a.ids)
         print('submissions:', sorted(submissions))
