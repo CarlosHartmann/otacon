@@ -105,11 +105,14 @@ def build(input_dir, index_dir, time_from, time_to, workers, subreddit_file=None
 
 
 def merge_bounds(con, parts):
-    """Key ranges to split the sorts on: one group for by_id, one per parent_is_submission value for by_parent."""
+    """Key ranges to split the sorts on: one group for by_id, one per parent_is_submission value for by_parent.
+    Parent ranges start at a low quantile: a few replies to very old comments would otherwise stretch the range and
+    crowd nearly all rows into the top chunks. Keys below the start land in chunk 0."""
     lo, hi = con.execute(f"SELECT min(id), max(id) FROM {parts}").fetchone()
     groups = {'by_id': [(None, lo, hi)], 'by_parent': []}
     for is_sub, plo, phi in con.execute(
-        f"SELECT parent_is_submission, min(parent_id), max(parent_id) FROM {parts} GROUP BY 1 ORDER BY 1"
+        f"SELECT parent_is_submission, approx_quantile(parent_id, 0.0001), max(parent_id) FROM {parts} "
+        f"GROUP BY 1 ORDER BY 1"
     ).fetchall():
         groups['by_parent'].append((is_sub, plo, phi))
     return groups
@@ -180,7 +183,7 @@ def merge(index_dir, subreddit_file=None, max_temp_size='800GiB', temp_dir=None,
         if not buckets.exists():
             print('splitting by_parent into buckets', flush=True)
             bucket_expr = 'CASE ' + ' '.join(
-                f'WHEN parent_is_submission = {str(is_sub).lower()} THEN (parent_id - {plo}) * {chunks} // {phi - plo + 1}'
+                f'WHEN parent_is_submission = {str(is_sub).lower()} THEN greatest(0, (parent_id - {plo}) * {chunks} // {phi - plo + 1})'
                 for is_sub, plo, phi in groups['by_parent']) + ' END'
             buckets_tmp = tmp / 'by_parent_buckets.tmp'
             if buckets_tmp.exists():

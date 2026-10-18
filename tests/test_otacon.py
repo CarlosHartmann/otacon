@@ -275,9 +275,17 @@ def test_thread_index_chunked_merge_is_sorted_filtered_and_resumable(tmp_path):
                 cols[f.name].append(v)
             next_id += rng.randrange(1, 5)
         pq.write_table(pa.table(cols, schema=thread_index.SCHEMA), tmp_path / 'parts' / f'{month}.parquet')
+    ancient_reply = (next_id, 1, False, 1, next_id, 'pics')  # below the quantile start of the parent range
+    rows.append(ancient_reply)
+    pq.write_table(pa.table({f.name: [v] for f, v in zip(thread_index.SCHEMA, ancient_reply)}, schema=thread_index.SCHEMA),
+                   tmp_path / 'parts' / '2010-04.parquet')
     subs = tmp_path / 'subs.txt'
     subs.write_text('askreddit\npics\n')
     kept = [r for r in rows if r[5] != 'dropped']
+    bounds = thread_index.merge_bounds(duckdb.connect(), f"read_parquet('{tmp_path}/parts/*.parquet')")
+    assert bounds['by_parent'][0][0] is False
+    bounds['by_parent'][0] = (False, 500, bounds['by_parent'][0][2])  # as if the quantile start skipped the outlier
+    (tmp_path / 'merge_bounds.json').write_text(json.dumps(bounds))
 
     thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=4)
     first_chunk = tmp_path / 'by_parent' / 'part-0-000.parquet'
