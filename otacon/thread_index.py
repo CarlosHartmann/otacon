@@ -2,7 +2,7 @@
 
 Usage:
     python -m otacon.thread_index build  --input DIR --index DIR [--subreddits FILE] [--time_from 2010-01] [--time_to 2021-09] [--workers 4]
-    python -m otacon.thread_index merge  --index DIR [--subreddits FILE] [--temp-dir DIR] [--max-temp-size 800GiB] [--chunks 20]
+    python -m otacon.thread_index merge  --index DIR [--subreddits FILE] [--temp-dir DIR] [--max-temp-size 800GiB] [--chunks 20] [--memory-limit 5GB] [--threads N]
     python -m otacon.thread_index lookup --index DIR ID [ID ...]
 '''
 
@@ -134,7 +134,8 @@ def write_chunk(con, select, dst, name):
     print(f'wrote {name}/{dst.name}', flush=True)
 
 
-def merge(index_dir, subreddit_file=None, max_temp_size='800GiB', temp_dir=None, chunks=20):
+def merge(index_dir, subreddit_file=None, max_temp_size='800GiB', temp_dir=None, chunks=20, memory_limit=None,
+          threads=None):
     """Write by_id/ and by_parent/ as sorted Parquet chunks split by key range, so each sort spills only ~1/chunks
     of the data. Finished chunks are skipped, so an interrupted merge resumes where it stopped.
 
@@ -142,12 +143,20 @@ def merge(index_dir, subreddit_file=None, max_temp_size='800GiB', temp_dir=None,
     parent_id stats span nearly everything (submission and comment parents are mixed), so by_parent first splits
     the rows into per-chunk buckets under the temp dir in one unsorted pass, then sorts each bucket."""
     idx = Path(index_dir)
-    con = duckdb.connect(config={'max_temp_directory_size': max_temp_size})
+    config = {'max_temp_directory_size': max_temp_size}
+    if memory_limit:
+        config['memory_limit'] = memory_limit
+    if threads:
+        config['threads'] = threads
+    con = duckdb.connect(config=config)
     tmp = Path(temp_dir) if temp_dir else idx / 'tmp'
     tmp.mkdir(parents=True, exist_ok=True)
     con.execute(f"SET temp_directory='{tmp}'")
     print(f'temp_directory: {tmp}', flush=True)
     print(f'max_temp_directory_size: {max_temp_size}', flush=True)
+    print(f"memory_limit: {con.execute('SELECT current_setting(?)', ['memory_limit']).fetchone()[0]}", flush=True)
+    print(f"threads: {con.execute('SELECT current_setting(?)', ['threads']).fetchone()[0]}", flush=True)
+    print(f'chunks: {chunks}', flush=True)
     parts = f"read_parquet('{idx}/parts/*.parquet')"
     filter_clause = ''
     if subreddit_file:
@@ -161,7 +170,9 @@ def merge(index_dir, subreddit_file=None, max_temp_size='800GiB', temp_dir=None,
     else:
         print('scanning key ranges', flush=True)
         groups = merge_bounds(con, parts)
-        bounds_file.write_text(json.dumps(groups))
+    if groups.setdefault('chunks', chunks) != chunks:  # finished chunk files would not line up with new ranges
+        raise SystemExit(f"{bounds_file} is for --chunks {groups['chunks']}, not {chunks}")
+    bounds_file.write_text(json.dumps(groups))
 
     by_id = idx / 'by_id'
     by_id.mkdir(exist_ok=True)
@@ -272,6 +283,8 @@ def main():
     m.add_argument('--max-temp-size', default='800GiB')
     m.add_argument('--temp-dir', help='DuckDB spill directory (default: <index>/tmp)')
     m.add_argument('--chunks', type=int, default=20, help='key-range chunks per sort (more = less spill per chunk)')
+    m.add_argument('--threads', type=int, help='DuckDB worker threads (default: one per core)')
+    m.add_argument('--memory-limit', help="DuckDB memory limit, e.g. '5GB' (default: DuckDB's 80%% of RAM)")
     l = sub.add_parser('lookup')
     l.add_argument('--index', required=True)
     l.add_argument('ids', nargs='+')
@@ -280,7 +293,7 @@ def main():
     if a.cmd == 'build':
         build(a.input, a.index, a.time_from, a.time_to, a.workers, a.subreddits)
     elif a.cmd == 'merge':
-        merge(a.index, a.subreddits, a.max_temp_size, a.temp_dir, a.chunks)
+        merge(a.index, a.subreddits, a.max_temp_size, a.temp_dir, a.chunks, a.memory_limit, a.threads)
     else:
         comments, submissions = ThreadIndex(a.index).thread(a.ids)
         print('submissions:', sorted(submissions))

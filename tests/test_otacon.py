@@ -287,10 +287,12 @@ def test_thread_index_chunked_merge_is_sorted_filtered_and_resumable(tmp_path):
     bounds['by_parent'][0] = (False, 500, bounds['by_parent'][0][2])  # as if the quantile start skipped the outlier
     (tmp_path / 'merge_bounds.json').write_text(json.dumps(bounds))
 
-    thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=4)
+    thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=4, memory_limit='1GB', threads=2)
     first_chunk = tmp_path / 'by_parent' / 'part-0-000.parquet'
     first_chunk.unlink()  # simulate an interruption after the other chunks finished
     thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=4)
+    with pytest.raises(SystemExit):  # chunk count is pinned by merge_bounds.json
+        thread_index.merge(tmp_path, subs, '1GiB', tmp_path / 'spill', chunks=5)
 
     def read(name):
         files = sorted((tmp_path / name).glob('*.parquet'))
