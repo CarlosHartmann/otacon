@@ -41,7 +41,17 @@ if [[ ! -r "$USER_FILE" ]]; then
     exit 1
 fi
 
-exec poetry run python -m otacon.history_runner \
+NOTIFY_TO="vscode_notifs@smog.sh"
+NOTIFY_FROM="uni@Carlos-Has-MacBook-Air.local"
+
+notify() {
+    printf 'From: %s\nTo: %s\nSubject: %s\n\n%s\n' "$NOTIFY_FROM" "$NOTIFY_TO" "$1" "$2" \
+        | /usr/sbin/sendmail -t -f "$NOTIFY_FROM" || echo "WARNING: notification failed." >&2
+}
+
+# A year is complete once its December has been offloaded and recorded.
+set +e
+poetry run python -m otacon.history_runner \
     --comments-input "$COMMENTS_INPUT" \
     --submissions-input "$SUBMISSIONS_INPUT" \
     --user-file "$USER_FILE" \
@@ -50,4 +60,15 @@ exec poetry run python -m otacon.history_runner \
     --state-file "$STATE_FILE" \
     --pause-file "$PAUSE_FILE" \
     --user-list-id "$USER_LIST_ID" \
-    --time-to 2022-12
+    --time-to 2022-12 2>&1 | while IFS= read -r line; do
+    print -r -- "$line"
+    if [[ "$line" =~ 'Offloaded and recorded ([0-9]{4})-12 ' ]]; then
+        notify "otacon sayer histories: ${match[1]} complete" "$line"
+    fi
+done
+runner_status=${pipestatus[1]}
+
+if (( runner_status != 0 )); then
+    notify "otacon sayer histories: FAILED (exit $runner_status)" "Re-run the script to resume from the NAS markers."
+fi
+exit $runner_status

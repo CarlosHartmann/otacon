@@ -212,10 +212,11 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
 
     if args.name is not None: # if a subreddit or user was specified as argument, the comment's metadata are checked accordingly
         src = 'author' if args.src == 'user' else 'subreddit' # the username is called 'author' in the data
-        
+        if src not in comment_or_post:
+            return False
+
         nm = comment_or_post[src] if args.case_sensitive else comment_or_post[src].lower()
-        
-        if src not in comment_or_post.keys() or nm not in args.name: 
+        if nm not in args.name:
             return False
     
     if args.toplevel and not comment_or_post['parent_id'].startswith('t3'):

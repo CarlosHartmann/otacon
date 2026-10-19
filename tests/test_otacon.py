@@ -181,6 +181,16 @@ def test_filter_then_extract_applies_filters_by_default(monkeypatch):
     assert extracted == [(review, 'AutoModerator')]
 
 
+def test_relevant_ignores_record_without_author():
+    args = SimpleNamespace(
+        name={'alice'},
+        src='user',
+        case_sensitive=False,
+    )
+
+    assert main_module.relevant({}, args) is False
+
+
 def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypatch, tmp_path):
     comments = tmp_path / 'comments'
     submissions = tmp_path / 'submissions'
@@ -201,33 +211,60 @@ def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypa
         'selftext': 'A submission', 'subreddit': 'example', 'score': 2,
         'author_flair_text': None, 'permalink': '/r/example/comments/post1/title/',
     }
+    (comments / 'RC_2022-11').write_text(json.dumps(comment) + '\n', encoding='utf-8')
     (comments / 'RC_2022-12').write_text(json.dumps(comment) + '\n', encoding='utf-8')
     (comments / 'RC_2023-01').write_text(json.dumps(comment) + '\n', encoding='utf-8')
+    (submissions / 'RS_2022-11').write_text(json.dumps(submission) + '\n', encoding='utf-8')
     (submissions / 'RS_2022-12').write_text(json.dumps(submission) + '\n', encoding='utf-8')
     (submissions / 'RS_2023-01').write_text(json.dumps(submission) + '\n', encoding='utf-8')
     user_file = tmp_path / 'users.txt'
     user_file.write_text('AutoModerator\nalice\n', encoding='utf-8')
 
     moves = []
+    events = []
 
     def fake_rclone(arguments, capture_output=False):
         listing = '\n'.join(path.name for path in remote_root.iterdir())
         return SimpleNamespace(returncode=0, stdout=listing)
 
-    def fake_move_pairs(pairs):
-        moves.extend(str(destination) for _, destination in pairs)
-        for source, destination in pairs:
-            source_path = Path(str(source).rstrip('/'))
-            destination_path = Path(destination)
-            destination_path.mkdir(parents=True, exist_ok=True)
-            if source_path.is_dir():
-                for child in list(source_path.iterdir()):
-                    shutil.move(str(child), str(destination_path / child.name))
-            else:
-                shutil.move(str(source_path), str(destination_path / source_path.name))
+    class FakeOffload:
+        def __init__(self, pairs, month):
+            self.pairs = pairs
+            self.month = month
+            self.args = ['fake-rclone']
+            self.finished = False
+
+        def wait(self):
+            if not self.finished:
+                events.append(('offload-finish', self.month))
+                moves.extend(str(destination) for _, destination in self.pairs)
+                for source, destination in self.pairs:
+                    source_path = Path(str(source).rstrip('/'))
+                    destination_path = Path(destination)
+                    destination_path.mkdir(parents=True, exist_ok=True)
+                    if source_path.is_dir():
+                        for child in list(source_path.iterdir()):
+                            shutil.move(str(child), str(destination_path / child.name))
+                    else:
+                        shutil.move(str(source_path), str(destination_path / source_path.name))
+                self.finished = True
+            return 0
+
+    def fake_start_move_pairs(pairs):
+        marker = next(str(source) for source, _ in pairs if '_otacon_history_' in str(source))
+        month = re.search(r'_otacon_history_(\d{4}-\d{2})_', marker).group(1)
+        events.append(('offload-start', month))
+        return FakeOffload(pairs, month)
+
+    original_process_month = main_module.process_month
+
+    def track_process_month(month, *args):
+        events.append(('scan', month[-7:]))
+        return original_process_month(month, *args)
 
     monkeypatch.setattr(history_runner, '_run_rclone', fake_rclone)
-    monkeypatch.setattr(history_runner, '_move_pairs', fake_move_pairs)
+    monkeypatch.setattr(history_runner, '_start_move_pairs', fake_start_move_pairs)
+    monkeypatch.setattr(main_module, 'process_month', track_process_month)
     config = SimpleNamespace(
         comments_input=comments,
         submissions_input=submissions,
@@ -242,17 +279,21 @@ def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypa
 
     history_runner._run(config)
 
-    comment_output = next((remote_root / 'comments').glob('*.jsonl'))
-    submission_output = next((remote_root / 'submissions').glob('*.jsonl'))
-    comment_result = json.loads(comment_output.read_text(encoding='utf-8'))
-    submission_result = json.loads(submission_output.read_text(encoding='utf-8'))
-    assert comment_result['author'] == 'AutoModerator'
-    assert comment_result['_otacon_type'] == 'comment'
-    assert submission_result['selftext'] == 'A submission'
-    assert submission_result['_otacon_type'] == 'post'
-    assert moves == [str(remote_root / 'submissions'), str(remote_root / 'comments'), str(remote_root)]
-    assert config.state_file.read_text(encoding='utf-8').splitlines() == ['2022-12']
-
+    comment_outputs = list((remote_root / 'comments').glob('*.jsonl'))
+    submission_outputs = list((remote_root / 'submissions').glob('*.jsonl'))
+    comment_results = [json.loads(path.read_text(encoding='utf-8')) for path in comment_outputs]
+    submission_results = [json.loads(path.read_text(encoding='utf-8')) for path in submission_outputs]
+    assert len(comment_results) == len(submission_results) == 2
+    assert all(result['author'] == 'AutoModerator' for result in comment_results)
+    assert all(result['_otacon_type'] == 'comment' for result in comment_results)
+    assert all(result['selftext'] == 'A submission' for result in submission_results)
+    assert all(result['_otacon_type'] == 'post' for result in submission_results)
+    assert events.index(('scan', '2022-12')) < events.index(('offload-finish', '2022-11'))
+    assert moves == [
+        str(remote_root / 'submissions'), str(remote_root / 'comments'), str(remote_root),
+        str(remote_root / 'submissions'), str(remote_root / 'comments'), str(remote_root),
+    ]
+    assert config.state_file.read_text(encoding='utf-8').splitlines() == ['2022-11', '2022-12']
 
 def test_thread_index_chunked_merge_is_sorted_filtered_and_resumable(tmp_path):
     import random

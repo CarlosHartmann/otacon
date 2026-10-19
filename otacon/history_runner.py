@@ -61,7 +61,7 @@ def _run_rclone(arguments: list, capture_output: bool = False) -> subprocess.Com
     )
 
 
-def _move_pairs(pairs: list) -> None:
+def _start_move_pairs(pairs: list) -> subprocess.Popen:
     shell_script = (
         'source ~/.zshrc >/dev/null 2>&1; '
         'typeset -f rclone-custom >/dev/null || exit 127; '
@@ -73,7 +73,7 @@ def _move_pairs(pairs: list) -> None:
     arguments = ["zsh", "-c", shell_script, "otacon-history-runner"]
     for source, destination in pairs:
         arguments.extend((str(source), str(destination)))
-    subprocess.run(arguments, check=True)
+    return subprocess.Popen(arguments)
 
 
 def _load_otacon_args(config: argparse.Namespace):
@@ -107,6 +107,19 @@ def _record_completed_month(state_file: Path, month: str) -> None:
     with state_file.open("a", encoding="utf-8") as state:
         state.write(month + "\n")
         state.flush()
+
+
+def _finish_offload(pending: dict, state_file: Path, completed: set) -> None:
+    return_code = pending["process"].wait()
+    if return_code != 0:
+        raise subprocess.CalledProcessError(return_code, pending["process"].args)
+
+    for output_dir, _ in pending["stream_outputs"]:
+        output_dir.rmdir()
+    pending["work_dir"].rmdir()
+    _record_completed_month(state_file, pending["month"])
+    completed.add(pending["month"])
+    print(f"=== Offloaded and recorded {pending['month']} ===", flush=True)
 
 
 def _run(config: argparse.Namespace) -> None:
@@ -150,35 +163,41 @@ def _run(config: argparse.Namespace) -> None:
         flush=True,
     )
 
-    for month in incomplete_months:
-        if config.pause_file.exists():
-            print(f"Pause requested before {month}; it is safe to eject the drive.", flush=True)
-            return
+    pending_offload = None
+    try:
+        for month in incomplete_months:
+            if config.pause_file.exists():
+                if pending_offload is not None:
+                    _finish_offload(pending_offload, config.state_file, completed)
+                    pending_offload = None
+                print(f"Pause requested before {month}; it is safe to eject the drive.", flush=True)
+                return
 
-        work_dir = Path(tempfile.mkdtemp(prefix=f".{month}.", dir=config.output_root))
-        stream_outputs = []
-        try:
-            print(f"=== Processing {month} ===", flush=True)
-            for stream, input_dir, month_files, prefix, searchmode, remote_dir in (
-                ("submissions", config.submissions_input, submissions, "RS", "subs", f"{config.remote_root}/submissions"),
-                ("comments", config.comments_input, comments, "RC", "comms", f"{config.remote_root}/comments"),
-            ):
-                input_files = month_files.get(month, [])
-                if not input_files:
-                    continue
+            work_dir = Path(tempfile.mkdtemp(prefix=f".{month}.", dir=config.output_root))
+            stream_outputs = []
+            try:
+                print(f"=== Processing {month} ===", flush=True)
+                for stream, input_dir, month_files, prefix, searchmode, remote_dir in (
+                    ("submissions", config.submissions_input, submissions, "RS", "subs", f"{config.remote_root}/submissions"),
+                    ("comments", config.comments_input, comments, "RC", "comms", f"{config.remote_root}/comments"),
+                ):
+                    input_files = month_files.get(month, [])
+                    if not input_files:
+                        continue
 
-                output_dir = work_dir / stream
-                output_dir.mkdir()
-                stream_outputs.append((output_dir, remote_dir))
-                args.input = str(input_dir)
-                args.output = str(output_dir)
-                args.searchmode = searchmode
+                    output_dir = work_dir / stream
+                    output_dir.mkdir()
+                    stream_outputs.append((output_dir, remote_dir))
+                    args.input = str(input_dir)
+                    args.output = str(output_dir)
+                    args.searchmode = searchmode
 
-                for input_file in input_files:
-                    outfile, reviewfile = otacon_main.open_files(args, input_file)
-                    otacon_main.process_month(input_file, args, outfile, reviewfile)
+                    for input_file in input_files:
+                        outfile, reviewfile = otacon_main.open_files(args, input_file)
+                        otacon_main.process_month(input_file, args, outfile, reviewfile)
+            finally:
+                otacon_main.hash_set.clear()
 
-            otacon_main.hash_set.clear()
             marker = work_dir / (
                 f"_otacon_history_{month}_through_{config.time_to}"
                 f"_users_{config.user_list_id}_complete"
@@ -186,22 +205,30 @@ def _run(config: argparse.Namespace) -> None:
             marker.touch()
             move_pairs = [(f"{output_dir}/", remote_dir) for output_dir, remote_dir in stream_outputs]
             move_pairs.append((marker, config.remote_root))
-            _move_pairs(move_pairs)
 
-            for output_dir, _ in stream_outputs:
-                output_dir.rmdir()
-            work_dir.rmdir()
-            _record_completed_month(config.state_file, month)
-            completed.add(month)
-            print(f"=== Offloaded and recorded {month} ===", flush=True)
-        finally:
-            otacon_main.hash_set.clear()
+            # Allow one month of rclone offload to overlap with scanning the next.
+            if pending_offload is not None:
+                _finish_offload(pending_offload, config.state_file, completed)
+            pending_offload = {
+                "month": month,
+                "work_dir": work_dir,
+                "stream_outputs": stream_outputs,
+                "process": _start_move_pairs(move_pairs),
+            }
 
-        if config.pause_file.exists():
-            print(f"Pause requested; {month} is complete and offloaded. It is safe to eject the drive.", flush=True)
-            return
+            if config.pause_file.exists():
+                _finish_offload(pending_offload, config.state_file, completed)
+                pending_offload = None
+                print(f"Pause requested; {month} is complete and offloaded. It is safe to eject the drive.", flush=True)
+                return
 
-    print(f"All available months through {config.time_to} are offloaded to {config.remote_root}.", flush=True)
+        if pending_offload is not None:
+            _finish_offload(pending_offload, config.state_file, completed)
+            pending_offload = None
+        print(f"All available months through {config.time_to} are offloaded to {config.remote_root}.", flush=True)
+    finally:
+        if pending_offload is not None:
+            pending_offload["process"].wait()
 
 
 def main() -> None:
