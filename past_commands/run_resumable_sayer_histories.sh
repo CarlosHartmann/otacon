@@ -1,8 +1,9 @@
 #!/usr/bin/env zsh
-# Extract all comments, then all submissions, keeping the username set loaded
-# for each full-range otacon process. Run again to resume between these phases.
-# To pause safely, touch "$OUTPUT_ROOT/.pause_requested" and wait for the
-# current phase to finish and offload.
+# Extract the listed users' monthly comment and submission histories with parallel workers.
+# Each finished month is compressed, copied to the NAS and archived on dissertationhorse
+# (see offload_sayer_month.zsh). Run again to resume from the completion markers.
+# To pause safely, touch "$OUTPUT_ROOT/.pause_requested"; every worker finishes and
+# offloads its current month, then exits.
 
 source ~/.zshrc
 
@@ -19,20 +20,24 @@ COMMENTS_INPUT="$DATA_ROOT/comments"
 SUBMISSIONS_INPUT="$DATA_ROOT/submissions"
 USER_FILE="/Users/uni/Documents/GitHub/shadow_moses/0-assets/raw_data/main/7-unique-usernames-and-subreddits/unique_usernames.txt"
 USER_LIST_ID="$(shasum -a 256 "$USER_FILE" | cut -c1-12)"
-OUTPUT_ROOT="$DATA_ROOT/output/project3/OP_sayer_histories"
-REMOTE_ROOT="almazen:reddit_data/output/project3/OP_sayer_histories"
+# 2005-12..2021-05 were archived uncompressed on /Volumes/Limbo/reddit-OPsayerhistories.
+OUTPUT_ROOT="/Volumes/dissertationhorse/OP_sayer_histories_work"
+LOCAL_ROOT="/Volumes/dissertationhorse/OP_sayer_histories"
+OFFLOAD_COMMAND="$REPO_DIR/past_commands/offload_sayer_month.zsh"
+WORKER_COUNT=3
+TIME_TO="2022-12"
 
-STATE_FILE="$OUTPUT_ROOT/.completed_months_through_2022-12_users-$USER_LIST_ID"
+STATE_FILE="$OUTPUT_ROOT/.completed_months_through_${TIME_TO}_users-$USER_LIST_ID"
 PAUSE_FILE="$OUTPUT_ROOT/.pause_requested"
 
-mkdir -p "$OUTPUT_ROOT"
+mkdir -p "$OUTPUT_ROOT" "$LOCAL_ROOT"
 rm -f "$PAUSE_FILE"
 
 cd "$REPO_DIR"
 
-for required_path in "$COMMENTS_INPUT" "$SUBMISSIONS_INPUT"; do
+for required_path in "$COMMENTS_INPUT" "$SUBMISSIONS_INPUT" "$LOCAL_ROOT"; do
     if [[ ! -d "$required_path" ]]; then
-        echo "ERROR: input directory $required_path is not reachable. Is the external HDD connected?"
+        echo "ERROR: directory $required_path is not reachable. Is the external HDD connected?"
         exit 1
     fi
 done
@@ -49,26 +54,65 @@ notify() {
         | /usr/sbin/sendmail -t -f "$NOTIFY_FROM" || echo "WARNING: notification failed." >&2
 }
 
-# A year is complete once its December has been offloaded and recorded.
-set +e
-poetry run python -m otacon.history_runner \
-    --comments-input "$COMMENTS_INPUT" \
-    --submissions-input "$SUBMISSIONS_INPUT" \
-    --user-file "$USER_FILE" \
-    --output-root "$OUTPUT_ROOT" \
-    --remote-root "$REMOTE_ROOT" \
-    --state-file "$STATE_FILE" \
-    --pause-file "$PAUSE_FILE" \
-    --user-list-id "$USER_LIST_ID" \
-    --time-to 2022-12 2>&1 | while IFS= read -r line; do
-    print -r -- "$line"
-    if [[ "$line" =~ 'Offloaded and recorded ([0-9]{4})-12 ' ]]; then
-        notify "otacon sayer histories: ${match[1]} complete" "$line"
-    fi
-done
-runner_status=${pipestatus[1]}
+zmodload zsh/datetime
+ETA_SCRIPT="$REPO_DIR/past_commands/sayer_histories_eta.zsh"
+run_start=$EPOCHSECONDS
 
-if (( runner_status != 0 )); then
-    notify "otacon sayer histories: FAILED (exit $runner_status)" "Re-run the script to resume from the NAS markers."
-fi
-exit $runner_status
+# A year is complete once all of its months are recorded, whichever workers did them.
+year_complete() {
+    local year=$1 month
+    for month in {01..12}; do
+        grep -qx "$year-$month" "$STATE_FILE" 2>/dev/null || return 1
+    done
+}
+
+run_worker() {
+    local worker_index=$1 line year runner_status
+    set +e
+    poetry run python -m otacon.history_runner \
+        --comments-input "$COMMENTS_INPUT" \
+        --submissions-input "$SUBMISSIONS_INPUT" \
+        --user-file "$USER_FILE" \
+        --output-root "$OUTPUT_ROOT" \
+        --remote-root "$LOCAL_ROOT" \
+        --state-file "$STATE_FILE" \
+        --pause-file "$PAUSE_FILE" \
+        --user-list-id "$USER_LIST_ID" \
+        --worker-index "$worker_index" \
+        --worker-count "$WORKER_COUNT" \
+        --offload-command "$OFFLOAD_COMMAND" \
+        --time-to "$TIME_TO" 2>&1 | while IFS= read -r line; do
+        print -r -- "$line"
+        if [[ "$line" =~ 'Offloaded and recorded ([0-9]{4})-[0-9]{2} ' ]]; then
+            year="${match[1]}"
+            # noclobber makes the flag file a once-only claim across workers.
+            if year_complete "$year" && ( set -o noclobber; : > "$OUTPUT_ROOT/.notified_$year" ) 2>/dev/null; then
+                notify "otacon sayer histories: $year complete" "$line
+$(zsh "$ETA_SCRIPT" "$STATE_FILE" "$LOCAL_ROOT" "$run_start" 2>&1)
+$(df -h "$LOCAL_ROOT" | tail -1)"
+            fi
+        elif [[ "$line" == LOW\ SPACE:* ]]; then
+            notify "otacon sayer histories: worker $worker_index stopped, low disk space" "$line"
+        fi
+    done
+    runner_status=${pipestatus[1]}
+    if (( runner_status != 0 )); then
+        notify "otacon sayer histories: worker $worker_index FAILED (exit $runner_status)" \
+            "See $OUTPUT_ROOT/worker_$worker_index.log. Re-run the script to resume from the markers in $LOCAL_ROOT."
+    fi
+    return $runner_status
+}
+
+typeset -a worker_pids
+for worker_index in {0..$(( WORKER_COUNT - 1 ))}; do
+    run_worker $worker_index > "$OUTPUT_ROOT/worker_$worker_index.log" 2>&1 &
+    worker_pids+=($!)
+    echo "Started worker $worker_index (pid $!), log $OUTPUT_ROOT/worker_$worker_index.log"
+done
+
+overall_status=0
+for pid in $worker_pids; do
+    wait $pid || overall_status=$?
+done
+echo "All workers finished (status $overall_status)."
+exit $overall_status

@@ -95,8 +95,9 @@ def extract(args, comment_or_post: dict, compiled_comment_regex: str, include_qu
     text = comment_or_post['body'] if args.searchmode == 'comms' else comment_or_post.get('selftext', '')
     user = comment_or_post['author']
     flairtext = comment_or_post.get('author_flair_text')
-    subreddit = comment_or_post['subreddit']
-    score = comment_or_post['score']
+    # some Pushshift entries (e.g. certain 2014 submissions) lack these fields
+    subreddit = comment_or_post.get('subreddit')
+    score = comment_or_post.get('score')
     date = comment_or_post['created_utc']
 
     # assemble a standard Reddit URL for older data

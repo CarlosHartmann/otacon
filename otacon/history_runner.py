@@ -2,6 +2,7 @@
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,10 @@ from otacon.prep_input import establish_timeframe
 
 
 MONTH_PATTERN = re.compile(r"^(RC|RS)_(\d{4}-\d{2})(?:\..*)?$")
+GIB = 1024 ** 3
+# Stop before a month whose estimated output (last month x growth margin + reserve) won't fit.
+SPACE_GROWTH_FACTOR = 1.5
+SPACE_RESERVE_BYTES = 50 * GIB
 
 
 def define_runner_parser() -> argparse.ArgumentParser:
@@ -26,6 +31,11 @@ def define_runner_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pause-file", type=Path, required=True)
     parser.add_argument("--user-list-id", required=True)
     parser.add_argument("--time-to", default="2022-12")
+    parser.add_argument("--worker-index", type=int, default=0)
+    parser.add_argument("--worker-count", type=int, default=1,
+                        help="Split months across parallel workers by their position in the full month list.")
+    parser.add_argument("--offload-command", type=Path,
+                        help="Script called as SCRIPT WORK_DIR MARKER instead of rclone-moving outputs to --remote-root.")
     return parser
 
 
@@ -74,6 +84,43 @@ def _start_move_pairs(pairs: list) -> subprocess.Popen:
     for source, destination in pairs:
         arguments.extend((str(source), str(destination)))
     return subprocess.Popen(arguments)
+
+
+def _start_offload_command(command: Path, work_dir: Path, marker: Path) -> subprocess.Popen:
+    return subprocess.Popen(["zsh", str(command), str(work_dir), str(marker)])
+
+
+def _tree_size(path: Path) -> int:
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+
+
+def _local_remote(remote_root: str):
+    path = Path(remote_root)
+    return path if path.is_absolute() and path.is_dir() else None
+
+
+def _month_size_on_remote(remote_dir: Path, month: str) -> int:
+    pattern = f"_from_R[CS]_{month}.zst_"
+    return sum(
+        item.stat().st_size for item in remote_dir.rglob("*")
+        if item.is_file() and re.search(pattern, item.name)
+    )
+
+
+def _space_shortfall(config: argparse.Namespace, last_month_bytes: int, pending_bytes: int):
+    """Return a message if the next month might not fit on the work disk or the local offload target."""
+    needed = int(last_month_bytes * SPACE_GROWTH_FACTOR) + SPACE_RESERVE_BYTES
+    checks = [("work disk", config.output_root, needed)]
+    remote_dir = _local_remote(config.remote_root)
+    if remote_dir is not None:
+        # The pending month may not have landed on the target yet; count it against free space.
+        checks.append(("offload target", remote_dir, needed + pending_bytes))
+    for label, path, required in checks:
+        free = shutil.disk_usage(path).free
+        print(f"Free space on {label} {path}: {free / GIB:,.1f} GiB (need {required / GIB:,.1f} GiB).", flush=True)
+        if free < required:
+            return f"{label} {path} has {free / GIB:,.1f} GiB free, next month needs ~{required / GIB:,.1f} GiB"
+    return None
 
 
 def _load_otacon_args(config: argparse.Namespace):
@@ -147,11 +194,15 @@ def _run(config: argparse.Namespace) -> None:
         )
         remote_completed = set(marker_pattern.findall(remote_listing.stdout))
         for month in sorted(remote_completed & set(months) - completed):
-            print(f"Found completed {month} on NAS; recording local state.", flush=True)
+            print(f"Found completed {month} at {config.remote_root}; recording local state.", flush=True)
             _record_completed_month(config.state_file, month)
         completed.update(remote_completed)
 
-    incomplete_months = [month for month in months if month not in completed]
+    # Assign by position in the full list so a worker keeps its months across restarts.
+    incomplete_months = [
+        month for position, month in enumerate(months)
+        if month not in completed and position % config.worker_count == config.worker_index
+    ]
     if not incomplete_months:
         print(f"All available months through {config.time_to} are already complete.", flush=True)
         return
@@ -163,9 +214,24 @@ def _run(config: argparse.Namespace) -> None:
         flush=True,
     )
 
+    last_month_bytes = 0
+    remote_dir = _local_remote(config.remote_root)
+    previous_months = [month for month in months if month in completed and month < incomplete_months[0]]
+    if remote_dir is not None and previous_months:
+        last_month_bytes = _month_size_on_remote(remote_dir, previous_months[-1])
+
     pending_offload = None
     try:
         for month in incomplete_months:
+            pending_bytes = pending_offload["bytes"] if pending_offload is not None else 0
+            shortfall = _space_shortfall(config, last_month_bytes, pending_bytes)
+            if shortfall is not None:
+                if pending_offload is not None:
+                    _finish_offload(pending_offload, config.state_file, completed)
+                    pending_offload = None
+                print(f"LOW SPACE: stopping before {month}; {shortfall}.", flush=True)
+                return
+
             if config.pause_file.exists():
                 if pending_offload is not None:
                     _finish_offload(pending_offload, config.state_file, completed)
@@ -203,17 +269,24 @@ def _run(config: argparse.Namespace) -> None:
                 f"_users_{config.user_list_id}_complete"
             )
             marker.touch()
+            last_month_bytes = _tree_size(work_dir)
+            print(f"{month} output: {last_month_bytes / GIB:,.2f} GiB.", flush=True)
             move_pairs = [(f"{output_dir}/", remote_dir) for output_dir, remote_dir in stream_outputs]
             move_pairs.append((marker, config.remote_root))
 
-            # Allow one month of rclone offload to overlap with scanning the next.
+            # Allow one month of offload to overlap with scanning the next.
             if pending_offload is not None:
                 _finish_offload(pending_offload, config.state_file, completed)
+            if config.offload_command is not None:
+                offload_process = _start_offload_command(config.offload_command, work_dir, marker)
+            else:
+                offload_process = _start_move_pairs(move_pairs)
             pending_offload = {
                 "month": month,
                 "work_dir": work_dir,
                 "stream_outputs": stream_outputs,
-                "process": _start_move_pairs(move_pairs),
+                "bytes": last_month_bytes,
+                "process": offload_process,
             }
 
             if config.pause_file.exists():
