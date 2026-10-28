@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 # Extract the forest recon comments and submissions (ORDER.md) from the dumps on rdisk2 with
 # otacon/forest_extraction.py. Starts itself detached and appends to $OUTPUT_ROOT/extraction.log;
-# an email goes out when the run finishes, pauses or fails.
+# an email goes out when the run finishes, pauses, fails or stops for low disk space (it stops
+# before the next file when the output disk has less than 20 GiB free).
 # Run it again to resume: finished dump files are skipped.
 # To pause, touch $OUTPUT_ROOT/.pause_requested: the workers finish their current files, then the
 # run exits. The next start removes the request.
@@ -18,7 +19,8 @@ REPO_DIR="/Users/$(whoami)/Documents/GitHub/otacon"
 IDS_DIR="$REPO_DIR/past_commands/forest_text_extraction/ids"
 COMMENTS_INPUT="/Volumes/rdisk2/redditdata/comments"
 SUBMISSIONS_INPUT="/Volumes/rdisk2/redditdata/submissions"
-OUTPUT_ROOT="/Volumes/dissertationhorse/OP_forest_texts"
+# Uncompressed NDJSON, ~40 GB expected, on the internal disk (the user's choice, 2026-10-28).
+OUTPUT_ROOT="/Users/uni/Documents/GitHub/shadow_moses/0-assets/raw_data/main/8-full-contexts/programmatic/otacon_output"
 WORKERS=2
 POLICY=(${=FOREST_POLICY:-nice -n 10})
 NOTIFY_TO="vscode_notifs@smog.sh"
@@ -76,7 +78,10 @@ poetry run python -m otacon.forest_extraction run --ids "$IDS_DIR" \
     --output "$OUTPUT_ROOT" --workers "$WORKERS" ${only:+--only} "${only[@]}"
 run_status=$?
 set -e
-if (( run_status != 0 )); then
+if (( run_status == 3 )); then
+    notify "otacon forest texts: stopped, low disk space" "$(tail -n 3 "$LOG")
+Free some space, then re-run $0 to resume."
+elif (( run_status != 0 )); then
     notify "otacon forest texts: FAILED (exit $run_status)" "$(tail -n 20 "$LOG")
 Re-run $0 to resume."
 elif [[ -e "$PAUSE_FILE" ]]; then

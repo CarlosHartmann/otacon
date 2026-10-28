@@ -227,30 +227,33 @@ def _id_lines(ids):
     return b''.join(i + b'\n' for i in sorted(ids, key=lambda i: int(i, 36)))
 
 
+def data_path(out_dir, name):
+    '''The output file of dump file NAME (e.g. RC_2015-06), which exists once that file is done.'''
+    return out_dir / name[:2] / f'{name}.ndjson'
+
+
 class _Output:
-    '''One dump file's outputs: a zstd data file and its side files, committed together.
+    '''One dump file's outputs: an NDJSON data file and its side files, committed together.
 
     The data file is renamed into place last, so its existence means the dump file is done.
     '''
 
-    def __init__(self, out_dir, kind, name):
+    def __init__(self, out_dir, name):
         self.out_dir, self.name = out_dir, name
-        self.path = out_dir / kind / f'{name}.ndjson.zst'
+        self.path = data_path(out_dir, name)
         self.tmp = self.path.with_name(f'.{self.path.name}.tmp')
         self.side = {}
         for stale in (out_dir / 'duplicates' / f'{name}.txt', out_dir / 'neighbours' / f'{name}.tsv'):
             stale.unlink(missing_ok=True)  # from an earlier run of this file
-        self.fh = open(self.tmp, 'wb')
-        self.writer = zstandard.ZstdCompressor(level=3, write_checksum=True).stream_writer(self.fh, closefd=False)
+        self.fh = open(self.tmp, 'wb', buffering=1 << 20)
         self.written = 0
 
     def write(self, line):
-        self.writer.write(line)
-        self.writer.write(b'\n')
+        self.fh.write(line)
+        self.fh.write(b'\n')
         self.written += 1
 
     def commit(self, stats):
-        self.writer.close()
         self.fh.flush()
         os.fsync(self.fh.fileno())
         self.fh.close()
@@ -275,7 +278,7 @@ def scan_rs(job):
     start, wanted = time.time(), _wanted
     authors, duplicates = {}, []
     lines = undecodable = full_parses = 0
-    out = _Output(out_dir, 'RS', name)
+    out = _Output(out_dir, name)
     for line in read_lines(path, name):
         if not line:
             continue
@@ -343,7 +346,7 @@ def scan_rc(job):
     expected = sum(1 for list_name in listed.values() if list_name == name)
     seen, duplicates, neighbour_found = set(), [], []
     lines = undecodable = full_parses = found = submitter_comments = 0
-    out = _Output(out_dir, 'RC', name)
+    out = _Output(out_dir, name)
     for line in read_lines(path, name):
         if not line:
             continue
@@ -466,14 +469,31 @@ class Progress:
         log(message)
 
 
-def _run_pass(jobs, worker, initializer, initargs, workers, out_dir, progress):
-    '''Run the jobs on a pool, a few at a time so a pause request takes effect. False if paused.'''
+def _low_space(args):
+    '''A message if the output disk has less than --min-free-gb free, else None.'''
+    free = shutil.disk_usage(args.output).free
+    if free < args.min_free_gb * 2**30:
+        return f'{free / 2**30:,.1f} GiB free on {args.output}, below --min-free-gb {args.min_free_gb:g}'
+    return None
+
+
+def _run_pass(jobs, worker, initializer, initargs, args, progress):
+    '''Run the jobs on a pool, a few at a time so a pause request takes effect. False if paused.
+
+    Before each file it checks the free space; below the minimum it lets the running files finish
+    and exits with status 3.
+    '''
+    out_dir, workers = args.output, args.workers
     pause_file = out_dir / PAUSE_NAME
-    todo, pending, failure = list(jobs), {}, None
+    todo, pending, failure, low_space = list(jobs), {}, None, None
     with ProcessPoolExecutor(max_workers=min(workers, len(todo)), mp_context=get_context('spawn'),
                              initializer=initializer, initargs=initargs) as pool:
         while todo or pending:
-            while todo and len(pending) < workers and failure is None and not pause_file.exists():
+            while (todo and len(pending) < workers and failure is None and low_space is None
+                   and not pause_file.exists()):
+                low_space = _low_space(args)
+                if low_space is not None:
+                    break
                 job = todo.pop(0)
                 log(f'start {job[0]} ({job[1].stat().st_size / 1e9:.2f} GB)')
                 pending[pool.submit(worker, job)] = job
@@ -492,6 +512,9 @@ def _run_pass(jobs, worker, initializer, initargs, workers, out_dir, progress):
                 write_report(out_dir)
     if failure is not None:
         raise failure
+    if low_space is not None:
+        log(f'LOW SPACE: stopped with {len(todo)} files of this pass left; {low_space}. Rerun to resume.')
+        sys.exit(3)
     if todo:
         log(f'Paused with {len(todo)} files of this pass left; rerun to resume.')
         return False
@@ -499,7 +522,7 @@ def _run_pass(jobs, worker, initializer, initargs, workers, out_dir, progress):
 
 
 def _rc_done(out_dir, name, map_complete):
-    if not (out_dir / 'RC' / f'{name}.ndjson.zst').exists():
+    if not data_path(out_dir, name).exists():
         return False
     stats = json.loads((out_dir / 'stats' / f'{name}.json').read_text())
     return stats['submitter_map'] == 'complete' or not map_complete  # redo test files once the map is complete
@@ -512,14 +535,19 @@ def run(args):
             sys.exit(f'Not reachable: {directory}')
     for sub in ('RS', 'RC', 'stats', 'missing', 'submitters'):
         (out_dir / sub).mkdir(parents=True, exist_ok=True)
-    lock = open(out_dir / '.lock', 'w')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        sys.exit(f'Another run is using {out_dir}.')
-    free = shutil.disk_usage(out_dir).free
-    if free < args.min_free_gb * 2**30:
-        sys.exit(f'Only {free / 2**30:,.0f} GiB free on {out_dir} (--min-free-gb {args.min_free_gb}).')
+    with open(out_dir / '.lock', 'w') as lock:  # closing it, on any exit, releases the lock
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.exit(f'Another run is using {out_dir}.')
+        _run_locked(args)
+
+
+def _run_locked(args):
+    out_dir, ids_dir = args.output, args.ids
+    if (low_space := _low_space(args)) is not None:
+        log(f'LOW SPACE: not starting; {low_space}.')
+        sys.exit(3)
 
     all_rs = dump_files(args.submissions_input, 'RS', RS_MONTHS)
     all_rc = dump_files(args.comments_input, 'RC', RC_MONTHS)
@@ -536,18 +564,18 @@ def run(args):
         rs = {n: p for n, p in rs.items() if n in args.only}
         rc = {n: p for n, p in rc.items() if n in args.only}
 
-    rs_done = {n for n in all_rs if (out_dir / 'RS' / f'{n}.ndjson.zst').exists()}
+    rs_done = {n for n in all_rs if data_path(out_dir, n).exists()}
     map_will_be_complete = rs_done | set(rs) == set(all_rs)  # once this run's RS pass is through
     sizes = {n: p.stat().st_size for n, p in {**rs, **rc}.items()}
     progress = Progress(sizes, [n for n in rs if n in rs_done]
                         + [n for n in rc if _rc_done(out_dir, n, map_will_be_complete)])
     log(f'{len(sizes)} dump files, {progress.total / 1e9:,.1f} GB; {len(progress.done)} already done; '
-        f'workers: {args.workers}; output {out_dir}')
+        f'workers: {args.workers}; output {out_dir} ({shutil.disk_usage(out_dir).free / 2**30:,.0f} GiB free)')
 
     rs_jobs = [(n, p, out_dir) for n, p in rs.items() if n not in rs_done]
     if rs_jobs:
         log(f'RS pass: {len(rs_jobs)} files')
-        if not _run_pass(rs_jobs, scan_rs, _init_rs, (str(ids_dir),), args.workers, out_dir, progress):
+        if not _run_pass(rs_jobs, scan_rs, _init_rs, (str(ids_dir),), args, progress):
             return
         rs_done |= {job[0] for job in rs_jobs}
     map_complete = rs_done == set(all_rs)
@@ -574,7 +602,7 @@ def run(args):
         rc_jobs.append((name, path, out_dir, own_list if own_list.exists() else None, neighbours, map_state))
     if rc_jobs:
         log(f'RC pass: {len(rc_jobs)} files, submitter map {map_state}')
-        if not _run_pass(rc_jobs, scan_rc, _init_rc, (str(ids_dir), map_files), args.workers, out_dir, progress):
+        if not _run_pass(rc_jobs, scan_rc, _init_rc, (str(ids_dir), map_files), args, progress):
             return
     write_report(out_dir)
     log(f'All {len(sizes)} selected dump files are done.')
@@ -620,7 +648,7 @@ def summary(args):
     print(f'Duplicates skipped: {total(rs, "duplicates"):,} RS, {total(rc, "duplicates"):,} RC; '
           f'undecodable lines: {total(rs, "undecodable"):,} RS, {total(rc, "undecodable"):,} RC; '
           f'lines parsed in full: {total(rs, "full_parses"):,} RS, {total(rc, "full_parses"):,} RC')
-    print(f'Output: {total(rs, "output_bytes") / 1e9:,.2f} GB RS, {total(rc, "output_bytes") / 1e9:,.2f} GB RC (zstd)')
+    print(f'Output: {total(rs, "output_bytes") / 1e9:,.2f} GB RS, {total(rc, "output_bytes") / 1e9:,.2f} GB RC')
     print(f'Worker time: {_duration(total(rs, "seconds"))} RS, {_duration(total(rc, "seconds"))} RC')
     if stats:
         print(f'First file finished {min(s["finished"] for s in stats.values())}, '
@@ -641,7 +669,8 @@ def main():
             p.add_argument('--comments-input', type=Path, required=True)
             p.add_argument('--submissions-input', type=Path, required=True)
             p.add_argument('--workers', type=int, default=2)
-            p.add_argument('--min-free-gb', type=float, default=100, help='free space required on the output disk')
+            p.add_argument('--min-free-gb', type=float, default=20,
+                           help='stop before the next file when the output disk has less free (GiB)')
             p.add_argument('--only', nargs='+', metavar='NAME', help='only these dump files, e.g. RS_2012-03 RC_2012-03')
     args = parser.parse_args()
     if args.command == 'run':
