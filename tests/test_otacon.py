@@ -123,12 +123,11 @@ def test_extract_submission_preserves_post_metadata():
 
 
 def test_process_timeframe_can_reset_deduplication_monthly(monkeypatch):
-    previous_hashes = main_module.hash_set.copy()
     seen_hash_counts = []
 
     def record_month(month, args, outfile, reviewfile):
         seen_hash_counts.append(len(main_module.hash_set))
-        main_module.hash_set.add(month)
+        main_module.hash_set.add(month.encode())
 
     try:
         main_module.hash_set.clear()
@@ -138,7 +137,6 @@ def test_process_timeframe_can_reset_deduplication_monthly(monkeypatch):
         assert seen_hash_counts == [0, 0]
     finally:
         main_module.hash_set.clear()
-        main_module.hash_set.update(previous_hashes)
 
 
 def test_filter_then_extract_skips_filters_when_requested(monkeypatch):
@@ -275,6 +273,9 @@ def test_history_runner_offloads_paired_month_with_cutoff_and_no_filter(monkeypa
         pause_file=output_root / '.pause_requested',
         user_list_id='test-list',
         time_to='2022-12',
+        worker_index=0,
+        worker_count=1,
+        offload_command=None,
     )
 
     history_runner._run(config)

@@ -18,6 +18,7 @@ from typing import Optional, TextIO
 
 from otacon.finalize import cleanup, gather_output_files, extract_time_info
 from otacon.argument_handling import define_parser, handle_args
+from otacon.dedup import DigestSet
 from otacon.pushshift_handling import read_redditfile
 from otacon.prep_input import establish_timeframe
 from otacon.prep_output import assemble_outfile_name, write_csv_headers
@@ -27,7 +28,7 @@ from otacon.sampling import get_samplepoints
 random.seed(42)
 
 # keep track of already-processed comments throughout function calls
-hash_set = set()
+hash_set = DigestSet()
 
 # return stats from which subreddits the relevant comments were and how many per subreddits
 stats_dict = {}
@@ -266,7 +267,7 @@ def relevant(comment_or_post: dict, args: argparse.Namespace) -> bool:
             return False
 
     
-    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True).encode()).hexdigest() # dicts are unhashable, their original json form is preferrable; hexdigest is used to reduce memory consumption
+    h = hashlib.md5(json.dumps(comment_or_post, sort_keys=True).encode()).digest() # dicts are unhashable, their original json form is preferrable; hash_set keeps a 64-bit prefix of each digest to save memory
     if h in hash_set: # hash check with all previous comments/posts in case the data contain redundancies
         return False
     else:
