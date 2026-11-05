@@ -48,18 +48,24 @@ def assemble_outfile_name(args: argparse.Namespace, month) -> str:
     return outfile_name
 
 
-def write_csv_headers(outfile_path: str, reviewfile_path: TextIO, args: argparse.Namespace):
+def _csv_headers(args: argparse.Namespace) -> list:
+    headers = ["type", "year", "month", 'id', 'text', 'span', 'matched', 'subreddit', 'score', 'user', 'flairtext', 'timestamp_utc', 'permalink']
+    if not args.commentregex:
+        headers.remove('span')
+        headers.remove('matched')
+    return headers
+
+
+def write_csv_headers(outfile_path: str, reviewfile_path: str, args: argparse.Namespace):
     """Write the headers for both the results file and the file for filtered-out hits."""
-    with open(outfile_path, 'a', encoding='utf-8') as outf, open(reviewfile_path, "a", encoding='utf-8') as reviewf:
-        headers = ["type", "year", "month", 'id', 'text', 'span', 'matched', 'subreddit', 'score', 'user', 'flairtext', 'timestamp_utc', 'permalink']
-
-        if not args.commentregex:
-            headers.remove('span')
-            headers.remove('matched')
-
+    with open(outfile_path, 'a', encoding='utf-8') as outf:
         csvwriter = csv.writer(outf, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        csvwriter.writerow(headers)
+        csvwriter.writerow(_csv_headers(args))
+    write_review_header(reviewfile_path, args)
 
-        headers.append('filter reason')
+
+def write_review_header(reviewfile_path: str, args: argparse.Namespace):
+    """Write the header of the file for filtered-out hits."""
+    with open(reviewfile_path, "a", encoding='utf-8') as reviewf:
         csvwriter = csv.writer(reviewf, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        csvwriter.writerow(headers)
+        csvwriter.writerow(_csv_headers(args) + ['filter reason'])

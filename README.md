@@ -116,7 +116,9 @@ Currently, only a German model has been added to the poetry project. You must ad
 
 `--reverse_order` will process the months in the input directory from last (i.e. most recent) to first (i.e. oldest / furthest in the past). This is useful for especially long data extractions that can be halved in time by running otacon on two different machines from its two different endpoints. Note that clean-up must then be performed manually.
 
-`--no_cleanup` will skip the clean-up step that collects all returned results into a single file and deletes the by-month files.
+`--prefilter` speeds up searches by `--src`/`--name` considerably. Every raw line of the data is first checked for whether it contains one of the given names at all, and only those lines are parsed and checked properly. Parsing every line is otherwise the slowest part of a search. Cannot be combined with `--sample`.
+
+`--no_cleanup` will skip the clean-up step at the end. All results of a run are written into a single file whose name is based on the first month searched. The clean-up step renames that file (and its filtered-out file, if any) after the whole search. It never merges, deletes or overwrites other files in the output directory.
 
 ### Example
 

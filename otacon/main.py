@@ -16,12 +16,12 @@ import calendar
 import argparse
 from typing import Optional, TextIO
 
-from otacon.finalize import cleanup, gather_output_files, extract_time_info
+from otacon.finalize import finalize_run
 from otacon.argument_handling import define_parser, handle_args
 from otacon.dedup import DigestSet
 from otacon.pushshift_handling import read_redditfile
 from otacon.prep_input import establish_timeframe
-from otacon.prep_output import assemble_outfile_name, write_csv_headers
+from otacon.prep_output import assemble_outfile_name, write_csv_headers, write_review_header
 from otacon.sampling import get_samplepoints
 
 # set seeds for reproducibility
@@ -299,13 +299,16 @@ def log_month(month: str):
     logging.info("Processing " + m_name + " " + year)
 
 
-def handle_review_stub(reviewfile: TextIO):
+def handle_review_stub(reviewfile_path: str, has_header: bool):
     """If no entries were filtered out, remove the review file and log this info."""
-    lines_in_review = sum(1 for line in open(reviewfile.name, "r", encoding="utf-8")) - 1
+    if not os.path.exists(reviewfile_path):
+        return
+    with open(reviewfile_path, "r", encoding="utf-8") as f:
+        lines_in_review = sum(1 for line in f) - (1 if has_header else 0) # CSV review files start with a header, JSONL ones don't
     if lines_in_review > 0:
-        logging.info(f"{lines_in_review} entries were filtered out into {reviewfile.name}.")
+        logging.info(f"{lines_in_review} entries were filtered out into {reviewfile_path}.")
     else:
-        os.remove(reviewfile.name)
+        os.remove(reviewfile_path)
         logging.info("No entries were filtered out.")
 
 
@@ -334,7 +337,6 @@ def process_month(month, args, outfile, reviewfile):
         - Modifies global 'reservoir' list with sampled entries if reservoir_size is set.
         - Modifies global 'relevant_count' counter.
         - Creates/appends to outfile and reviewfile if not counting and not using reservoir.
-        - Calls handle_review_stub() to finalize review file.
     Raises:
         Implicitly may raise exceptions from read_redditfile(), relevant(), and file I/O operations.
     """
@@ -351,9 +353,13 @@ def process_month(month, args, outfile, reviewfile):
         sample_points = get_samplepoints(month, args.sample, args.input)
 
     if not args.count and not args.reservoir_size:
+        # an empty review file is removed after each month, so a CSV one may need its header again
+        if not args.return_all and not os.path.exists(reviewfile):
+            write_review_header(reviewfile, args)
         outf, reviewf = open(outfile, "a", encoding="utf-8"), open(reviewfile, "a", encoding="utf-8")
 
-    for comment_or_post in read_redditfile(infile):
+    prefilter_names = args.name if args.prefilter else None
+    for comment_or_post in read_redditfile(infile, prefilter_names, args.case_sensitive):
         total_count += 1
         if not args.sample or (args.sample and total_count == sample_points[0]):
 
@@ -389,7 +395,7 @@ def process_month(month, args, outfile, reviewfile):
     if not args.count and not args.reservoir_size:
         outf.close()
         reviewf.close()
-        handle_review_stub(reviewf)
+        handle_review_stub(reviewfile, has_header=not args.return_all)
     elif args.count:
         return monthly_relevant_count
 
@@ -461,7 +467,7 @@ def process_reservoir_sampling(args, timeframe, outfile, reviewfile):
     
     outf.close()
     reviewf.close()
-    handle_review_stub(reviewf)
+    handle_review_stub(reviewfile, has_header=not args.return_all)
 
 
 def write_final_stats(args):
@@ -496,8 +502,8 @@ def main():
     else:
         process_timeframe(args, timeframe, outfile, reviewfile)
 
-    if not args.count and args.no_cleanup is None and args.reservoir_size is None:
-        cleanup(args.output, extraction_name=assemble_outfile_name(args, month=None))
+    if not args.count and not args.no_cleanup and args.reservoir_size is None:
+        finalize_run(outfile, reviewfile, final_name=assemble_outfile_name(args, month=None))
 
     write_final_stats(args)
     

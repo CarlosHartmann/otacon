@@ -71,11 +71,13 @@ def define_parser() -> argparse.ArgumentParser:
     parser.add_argument('--reverse_order', action='store_true', required=False,
                         help="Iterate through the relevant months in reverse order, i.e. from most recent to oldest.")
     parser.add_argument('--no_cleanup', action='store_true', required=False,
-                        help="Will skip the cleanup (amassing results in a single file) at the end.")
+                        help="Keep the result file named after the first month searched instead of renaming it after the whole search at the end.")
     parser.add_argument('--reset-dedup-monthly', action='store_true', required=False,
                         help="Clear duplicate tracking after each month to bound memory use.")
     parser.add_argument('--no_stats', action="store_true", required=False,
                         help="Removes per-subreddit statistics. Might improve efficiency.")
+    parser.add_argument('--prefilter', action="store_true", required=False,
+                        help="Speeds up --src/--name searches considerably: raw lines that don't contain any of the given names are skipped before JSON parsing. Requires --src and --name; cannot be combined with --sample.")
 
     return parser
 
@@ -117,6 +119,12 @@ def handle_args() -> argparse.Namespace:
 
     if args.spacy_search_exclusive and not args.spacy_search:
         parser.error("argument --spacy-search-exclusive requires argument --spacy-search also be given.")
+
+    if args.prefilter and args.name is None:
+        parser.error("argument --prefilter requires arguments --src and --name also be given.")
+    # sampling picks entries by their position among ALL lines of a month, which skipped lines would distort
+    if args.prefilter and args.sample is not None:
+        parser.error("argument --prefilter cannot be combined with --sample.")
 
     # makes checking slightly more efficient
     if args.name_file is not None:
